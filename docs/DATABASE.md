@@ -1,0 +1,309 @@
+# CareerPilot AI - Database Design
+
+> Version: 1.0  
+> Status: Draft  
+> Last Updated: July 9, 2026  
+> Owner: Selcan Aktürk
+
+---
+
+# Overview
+
+CareerPilot AI uses **Supabase PostgreSQL** as its primary database.
+
+The database is designed to securely store user profiles, uploaded resumes, AI-generated analyses, personalized learning roadmaps, and interview questions.
+
+Authentication is handled by **Supabase Auth**, while resume files are stored in **Supabase Storage**.
+
+---
+
+# Entity Relationship Overview
+
+```text
+                auth.users
+                     │
+                     │ 1:1
+                     ▼
+                 profiles
+                     │
+                     │ 1:N
+                     ▼
+                cv_uploads
+                     │
+                     │ 1:N
+                     ▼
+               cv_analyses
+                 │       │
+                 │       │
+                 │       └─────────────┐
+                 ▼                     ▼
+          roadmap_items      interview_questions
+```
+
+---
+
+# Table Details
+
+---
+
+## 1. profiles
+
+### Purpose
+
+Stores additional information about authenticated users.
+
+### Columns
+
+| Column           | Type      | Description                               |
+| ---------------- | --------- | ----------------------------------------- |
+| id               | uuid      | References `auth.users.id`                |
+| full_name        | text      | User's full name                          |
+| avatar_url       | text      | Optional profile image                    |
+| preferred_role   | text      | User's preferred career goal              |
+| experience_level | text      | Junior, Mid-level, Senior, Career Changer |
+| created_at       | timestamp | Profile creation date                     |
+| updated_at       | timestamp | Last update date                          |
+
+### Relationships
+
+```text
+profiles.id → auth.users.id
+```
+
+---
+
+## 2. cv_uploads
+
+### Purpose
+
+Stores metadata for uploaded CV files.
+
+The actual PDF file is stored in **Supabase Storage**.
+
+### Columns
+
+| Column           | Type      | Description                 |
+| ---------------- | --------- | --------------------------- |
+| id               | uuid      | Primary key                 |
+| user_id          | uuid      | References profiles.id      |
+| file_name        | text      | Original uploaded file name |
+| file_url         | text      | Public or signed file URL   |
+| file_path        | text      | Storage path                |
+| file_type        | text      | PDF, DOC or DOCX            |
+| file_size        | integer   | File size in bytes          |
+| target_role      | text      | Selected target role        |
+| experience_level | text      | Selected experience level   |
+| created_at       | timestamp | Upload date                 |
+
+### Relationships
+
+```text
+cv_uploads.user_id → profiles.id
+```
+
+---
+
+## 3. cv_analyses
+
+### Purpose
+
+Stores AI-generated analysis results for uploaded resumes.
+
+### Columns
+
+| Column         | Type      | Description                    |
+| -------------- | --------- | ------------------------------ |
+| id             | uuid      | Primary key                    |
+| user_id        | uuid      | References profiles.id         |
+| cv_upload_id   | uuid      | References cv_uploads.id       |
+| target_role    | text      | Target job role                |
+| overall_score  | integer   | Career readiness score (0–100) |
+| summary        | text      | Overall AI summary             |
+| strengths      | jsonb     | Strength list                  |
+| weaknesses     | jsonb     | Weakness list                  |
+| skill_gaps     | jsonb     | Missing skills                 |
+| cv_suggestions | jsonb     | Resume improvement suggestions |
+| created_at     | timestamp | Analysis creation date         |
+
+### Relationships
+
+```text
+cv_analyses.user_id → profiles.id
+
+cv_analyses.cv_upload_id → cv_uploads.id
+```
+
+---
+
+## 4. roadmap_items
+
+### Purpose
+
+Stores personalized roadmap items generated after an analysis.
+
+### Columns
+
+| Column      | Type      | Description                         |
+| ----------- | --------- | ----------------------------------- |
+| id          | uuid      | Primary key                         |
+| analysis_id | uuid      | References cv_analyses.id           |
+| title       | text      | Roadmap title                       |
+| description | text      | Step description                    |
+| priority    | text      | High, Medium, Low                   |
+| status      | text      | Not Started, In Progress, Completed |
+| due_date    | date      | Optional completion target          |
+| created_at  | timestamp | Creation date                       |
+
+### Relationships
+
+```text
+roadmap_items.analysis_id → cv_analyses.id
+```
+
+---
+
+## 5. interview_questions
+
+### Purpose
+
+Stores interview questions generated by AI.
+
+### Columns
+
+| Column           | Type      | Description                          |
+| ---------------- | --------- | ------------------------------------ |
+| id               | uuid      | Primary key                          |
+| analysis_id      | uuid      | References cv_analyses.id            |
+| question         | text      | Interview question                   |
+| category         | text      | Behavioral, Technical, Role-specific |
+| difficulty       | text      | Easy, Medium, Hard                   |
+| suggested_answer | text      | Optional AI guidance                 |
+| created_at       | timestamp | Creation date                        |
+
+### Relationships
+
+```text
+interview_questions.analysis_id → cv_analyses.id
+```
+
+---
+
+# Supabase Storage
+
+## Bucket
+
+```text
+cv-files
+```
+
+### File Structure
+
+```text
+cv-files/
+└── {user_id}/
+    └── {cv_upload_id}/
+        └── resume.pdf
+```
+
+Example:
+
+```text
+cv-files/2ab4fd9c/85cbaf11/resume.pdf
+```
+
+---
+
+# Row Level Security (RLS)
+
+All user-owned tables must have **Row Level Security (RLS)** enabled.
+
+Users can only access their own data.
+
+Protected tables:
+
+- profiles
+- cv_uploads
+- cv_analyses
+- roadmap_items
+- interview_questions
+
+Typical access rule:
+
+```sql
+auth.uid() = user_id
+```
+
+For child tables such as `roadmap_items` and `interview_questions`, ownership is inherited from the related analysis.
+
+---
+
+# Recommended Indexes
+
+Indexes improve query performance.
+
+Recommended indexes:
+
+- `cv_uploads.user_id`
+- `cv_analyses.user_id`
+- `cv_analyses.cv_upload_id`
+- `roadmap_items.analysis_id`
+- `interview_questions.analysis_id`
+
+---
+
+# Data Lifecycle
+
+```text
+User registers
+        │
+        ▼
+Profile created
+        │
+        ▼
+CV uploaded
+        │
+        ▼
+File stored in Supabase Storage
+        │
+        ▼
+Metadata saved in Database
+        │
+        ▼
+FastAPI requests OpenAI analysis
+        │
+        ▼
+Analysis stored
+        │
+        ├────────► Roadmap generated
+        │
+        └────────► Interview questions generated
+```
+
+---
+
+# Design Principles
+
+The database is designed to be:
+
+- Scalable
+- Secure
+- Normalized
+- Easy to maintain
+- AI-friendly
+- Compatible with Supabase best practices
+
+---
+
+# Future Expansion
+
+The schema is designed to support future features without major restructuring.
+
+Potential additions:
+
+- Cover Letter Generation
+- ATS Score Analysis
+- LinkedIn Profile Review
+- AI Chat History
+- Saved Job Descriptions
+- Resume Versioning
+- Team Workspaces
