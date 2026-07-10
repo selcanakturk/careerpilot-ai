@@ -1,4 +1,4 @@
-import type { FormEvent } from 'react';
+import { type FormEvent, useState } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
@@ -9,13 +9,40 @@ import { getFormValue } from '../utils/form';
 export default function RegisterPage() {
   const { isAuthenticated, register } = useAuth();
   const navigate = useNavigate();
+  const [errorMessage, setErrorMessage] = useState('');
+  const [infoMessage, setInfoMessage] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const fullName = getFormValue(event, 'name') || 'CareerPilot User';
-    const email = getFormValue(event, 'email') || 'user@example.com';
+    const fullName = getFormValue(event, 'name');
+    const email = getFormValue(event, 'email');
+    const password = getFormValue(event, 'password');
 
-    register({ fullName, email });
+    setErrorMessage('');
+    setInfoMessage('');
+
+    if (!fullName || !email || !password) {
+      setErrorMessage('Please fill in all required fields.');
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    const result = await register({ fullName, email, password });
+
+    setIsSubmitting(false);
+
+    if (result.error) {
+      setErrorMessage(result.error);
+      return;
+    }
+
+    if (result.message) {
+      setInfoMessage(result.message);
+      return;
+    }
+
     navigate('/dashboard', { replace: true });
   };
 
@@ -34,11 +61,21 @@ export default function RegisterPage() {
           Set up your workspace for CV analysis, skill gap feedback, and interview preparation.
         </p>
         <form className="mt-8 space-y-5" onSubmit={handleSubmit}>
-          <Input label="Full Name" name="name" type="text" placeholder="Alex Morgan" />
-          <Input label="Email" name="email" type="email" placeholder="you@example.com" />
-          <Input label="Password" name="password" type="password" placeholder="••••••••" />
-          <Button type="submit" className="w-full">
-            Create Account
+          <Input label="Full Name" name="name" type="text" placeholder="Alex Morgan" required />
+          <Input label="Email" name="email" type="email" placeholder="you@example.com" required />
+          <Input label="Password" name="password" type="password" placeholder="••••••••" required />
+          {errorMessage && (
+            <p className="rounded-md bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">
+              {errorMessage}
+            </p>
+          )}
+          {infoMessage && (
+            <p className="rounded-md bg-brand-50 px-4 py-3 text-sm font-medium text-brand-700">
+              {infoMessage}
+            </p>
+          )}
+          <Button type="submit" className="w-full" disabled={isSubmitting}>
+            {isSubmitting ? 'Creating Account...' : 'Create Account'}
           </Button>
         </form>
         <p className="mt-6 text-center text-sm text-slate-600">

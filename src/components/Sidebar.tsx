@@ -27,10 +27,13 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
   const { logout } = useAuth();
   const navigate = useNavigate();
 
-  const handleLogout = () => {
-    logout();
-    onClose();
-    navigate('/');
+  const handleLogout = async () => {
+    const result = await logout();
+
+    if (!result.error) {
+      onClose();
+      navigate('/');
+    }
   };
 
   return (

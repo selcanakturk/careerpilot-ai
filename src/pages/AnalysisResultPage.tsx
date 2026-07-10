@@ -14,7 +14,7 @@ import {
 
 export default function AnalysisResultPage() {
   const { id } = useParams();
-  const { hasAnalysis } = useAuth();
+  const { hasAnalysis, latestTargetRole } = useAuth();
 
   if (!hasAnalysis) {
     return (
@@ -37,7 +37,7 @@ export default function AnalysisResultPage() {
         <div>
           <p className="text-sm font-semibold text-brand-700">Analysis #{id ?? '1'}</p>
           <h1 className="mt-1 text-3xl font-bold tracking-tight text-slate-950">
-            Product Manager CV Analysis
+            {latestTargetRole || 'Career'} CV Analysis
           </h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
             A professional mock report focused on role fit, evidence quality, missing signals, and

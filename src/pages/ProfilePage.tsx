@@ -8,8 +8,8 @@ import { profilePreferences } from '../data/mockData';
 
 export default function ProfilePage() {
   const { user } = useAuth();
-  const fullName = user?.fullName ?? 'CareerPilot User';
-  const email = user?.email ?? 'user@example.com';
+  const fullName = user?.fullName ?? 'Account';
+  const email = user?.email ?? '';
 
   return (
     <div className="space-y-6">

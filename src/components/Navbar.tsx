@@ -15,9 +15,12 @@ export default function Navbar({ onMenuClick }: NavbarProps) {
   const { isAuthenticated, logout } = useAuth();
   const navigate = useNavigate();
 
-  const handleLogout = () => {
-    logout();
-    navigate('/');
+  const handleLogout = async () => {
+    const result = await logout();
+
+    if (!result.error) {
+      navigate('/');
+    }
   };
 
   return (
@@ -55,11 +58,24 @@ export default function Navbar({ onMenuClick }: NavbarProps) {
         <div className="flex items-center gap-2">
           {isAuthenticated ? (
             <>
-              <Link to="/dashboard">
-                <Button variant="ghost" className="hidden sm:inline-flex">
-                  Dashboard
-                </Button>
-              </Link>
+              <NavLink
+                to="/"
+                className="inline-flex min-h-11 items-center justify-center rounded-md px-3 py-2 text-sm font-semibold text-slate-700 transition hover:-translate-y-0.5 hover:bg-slate-100 sm:px-4"
+              >
+                Home
+              </NavLink>
+              <NavLink
+                to="/dashboard"
+                className={({ isActive }) =>
+                  `inline-flex min-h-11 items-center justify-center rounded-md px-3 py-2 text-sm font-semibold transition hover:-translate-y-0.5 sm:px-4 ${
+                    isActive
+                      ? 'bg-brand-50 text-brand-700'
+                      : 'text-slate-700 hover:bg-slate-100'
+                  }`
+                }
+              >
+                Dashboard
+              </NavLink>
               <Button onClick={handleLogout}>Sign Out</Button>
             </>
           ) : (

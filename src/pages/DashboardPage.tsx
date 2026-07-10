@@ -6,7 +6,7 @@ import { useAuth } from '../hooks/useAuth';
 import { dashboardSkillSummary, recentAnalyses, roadmapProgress, stats } from '../data/mockData';
 
 export default function DashboardPage() {
-  const { hasAnalysis, user } = useAuth();
+  const { hasAnalysis, latestFileName, latestTargetRole, user } = useAuth();
   const firstName = user?.fullName?.split(' ')[0];
   const hasAnalyses = Boolean(hasAnalysis && recentAnalyses.length);
 
@@ -24,6 +24,11 @@ export default function DashboardPage() {
                 ? 'Your latest CV review is ready. Focus on measurable product impact, analytics evidence, and interview stories before your next application.'
                 : 'Upload your first CV to unlock your career analysis.'}
             </p>
+            {hasAnalyses && (latestTargetRole || latestFileName) && (
+              <p className="mt-2 text-sm font-medium text-slate-500">
+                Latest review: {latestTargetRole || 'Target role'} · {latestFileName || 'Uploaded CV'}
+              </p>
+            )}
           </div>
           <Link to="/upload-cv">
             <Button className="w-full sm:w-auto">

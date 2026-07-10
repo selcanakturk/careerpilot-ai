@@ -1,4 +1,4 @@
-import { type FormEvent, useMemo, useState } from 'react';
+import { type FormEvent, type MouseEvent, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   CheckCircle2,
@@ -7,6 +7,7 @@ import {
   SearchCheck,
   ShieldCheck,
   Sparkles,
+  Trash2,
   WandSparkles,
 } from 'lucide-react';
 import Button from '../components/ui/Button';
@@ -16,32 +17,83 @@ import Input from '../components/ui/Input';
 import Textarea from '../components/ui/Textarea';
 import { useAuth } from '../hooks/useAuth';
 
+const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const ACCEPTED_EXTENSIONS = ['pdf', 'doc', 'docx'];
+
+function formatFileSize(size: number) {
+  return size >= 1024 * 1024
+    ? `${(size / (1024 * 1024)).toFixed(1)} MB`
+    : `${Math.max(1, Math.round(size / 1024))} KB`;
+}
+
+function getFileType(file: File) {
+  return file.name.split('.').pop()?.toUpperCase() || 'Unknown';
+}
+
 export default function UploadCVPage() {
   const navigate = useNavigate();
   const { completeMockAnalysis } = useAuth();
-  const [hasFile, setHasFile] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [targetRole, setTargetRole] = useState('');
   const [experienceLevel, setExperienceLevel] = useState('');
+  const [error, setError] = useState('');
 
-  const isReady = hasFile && Boolean(targetRole.trim()) && Boolean(experienceLevel);
+  const isReady = Boolean(selectedFile && targetRole.trim() && experienceLevel);
   const checklist = useMemo(
     () => [
-      { label: 'CV uploaded', complete: hasFile, icon: FileText },
+      { label: 'CV uploaded', complete: Boolean(selectedFile), icon: FileText },
       { label: 'Target role added', complete: Boolean(targetRole.trim()), icon: SearchCheck },
       { label: 'Context ready', complete: isReady, icon: Sparkles },
       { label: 'Privacy check', complete: true, icon: ShieldCheck },
     ],
-    [hasFile, isReady, targetRole],
+    [isReady, selectedFile, targetRole],
   );
+
+  const handleFileSelect = (file: File | null) => {
+    setError('');
+
+    if (!file) {
+      setSelectedFile(null);
+      return;
+    }
+
+    const extension = file.name.split('.').pop()?.toLowerCase();
+
+    if (!extension || !ACCEPTED_EXTENSIONS.includes(extension)) {
+      setSelectedFile(null);
+      setError('Please choose a PDF, DOC, or DOCX file.');
+      return;
+    }
+
+    if (file.size > MAX_FILE_SIZE) {
+      setSelectedFile(null);
+      setError('Your CV must be 10MB or smaller. Please choose a smaller file.');
+      return;
+    }
+
+    setSelectedFile(file);
+  };
+
+  const handleRemoveFile = (event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setSelectedFile(null);
+    setError('');
+  };
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    if (!isReady) {
+    if (!selectedFile || !targetRole.trim() || !experienceLevel) {
+      setError('Add your CV, target role, and experience level before running the analysis.');
       return;
     }
 
-    completeMockAnalysis();
+    completeMockAnalysis({
+      targetRole: targetRole.trim(),
+      fileName: selectedFile.name,
+      experienceLevel,
+    });
     navigate('/analysis/1');
   };
 
@@ -59,7 +111,40 @@ export default function UploadCVPage() {
       <div className="grid gap-6 lg:grid-cols-[1fr_0.75fr]">
         <Card className="p-5 sm:p-6">
           <form className="space-y-6" onSubmit={handleSubmit}>
-            <FileUpload onChange={(event) => setHasFile(Boolean(event.target.files?.length))} />
+            <FileUpload selectedFile={selectedFile} onFileSelect={handleFileSelect} />
+            {selectedFile && (
+              <div className="rounded-md border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <p className="font-medium text-slate-500">File name</p>
+                    <p className="mt-1 break-words font-semibold text-slate-900">{selectedFile.name}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleRemoveFile}
+                    className="inline-flex min-h-9 items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-semibold text-rose-700 transition hover:bg-rose-50 focus:outline-none focus:ring-2 focus:ring-rose-200"
+                  >
+                    <Trash2 className="size-4" />
+                    Remove file
+                  </button>
+                </div>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <p className="font-medium text-slate-500">File size</p>
+                    <p className="mt-1 font-semibold text-slate-900">{formatFileSize(selectedFile.size)}</p>
+                  </div>
+                  <div>
+                    <p className="font-medium text-slate-500">File type</p>
+                    <p className="mt-1 font-semibold text-slate-900">{getFileType(selectedFile)}</p>
+                  </div>
+                </div>
+              </div>
+            )}
+            {error && (
+              <div role="alert" className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                {error}
+              </div>
+            )}
             <div className="rounded-md border border-brand-100 bg-brand-50 px-4 py-3 text-sm text-brand-700">
               <div className="flex gap-3">
                 <Info className="mt-0.5 size-4 shrink-0" />
@@ -97,7 +182,7 @@ export default function UploadCVPage() {
               name="context"
               placeholder="Add preferred industry, seniority level, location, job description notes, or career goals."
             />
-            <Button type="submit" className="w-full sm:w-auto" disabled={!isReady}>
+            <Button type="submit" className="w-full sm:w-auto">
               <WandSparkles className="size-4" />
               Run Analysis
             </Button>
