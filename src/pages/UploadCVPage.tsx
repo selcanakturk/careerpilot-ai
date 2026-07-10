@@ -16,6 +16,7 @@ import FileUpload from '../components/ui/FileUpload';
 import Input from '../components/ui/Input';
 import Textarea from '../components/ui/Textarea';
 import { useAuth } from '../hooks/useAuth';
+import { uploadCV } from '../services/storageService';
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const ACCEPTED_EXTENSIONS = ['pdf', 'doc', 'docx'];
@@ -32,11 +33,13 @@ function getFileType(file: File) {
 
 export default function UploadCVPage() {
   const navigate = useNavigate();
-  const { completeMockAnalysis } = useAuth();
+  const { completeMockAnalysis, isAuthenticated, user } = useAuth();
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [targetRole, setTargetRole] = useState('');
   const [experienceLevel, setExperienceLevel] = useState('');
   const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
+  const [isUploading, setIsUploading] = useState(false);
 
   const isReady = Boolean(selectedFile && targetRole.trim() && experienceLevel);
   const checklist = useMemo(
@@ -51,6 +54,7 @@ export default function UploadCVPage() {
 
   const handleFileSelect = (file: File | null) => {
     setError('');
+    setSuccessMessage('');
 
     if (!file) {
       setSelectedFile(null);
@@ -79,22 +83,53 @@ export default function UploadCVPage() {
     event.stopPropagation();
     setSelectedFile(null);
     setError('');
+    setSuccessMessage('');
   };
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+
+    if (isUploading) {
+      return;
+    }
+
+    setError('');
+    setSuccessMessage('');
+
+    if (!isAuthenticated || !user) {
+      setError('Please sign in before uploading your CV.');
+      return;
+    }
 
     if (!selectedFile || !targetRole.trim() || !experienceLevel) {
       setError('Add your CV, target role, and experience level before running the analysis.');
       return;
     }
 
-    completeMockAnalysis({
-      targetRole: targetRole.trim(),
-      fileName: selectedFile.name,
-      experienceLevel,
-    });
-    navigate('/analysis/1');
+    setIsUploading(true);
+
+    try {
+      const uploadResult = await uploadCV(selectedFile, user.id);
+
+      completeMockAnalysis({
+        targetRole: targetRole.trim(),
+        fileName: selectedFile.name,
+        experienceLevel,
+        storagePath: uploadResult.path,
+        storageFullPath: uploadResult.fullPath,
+        storageBucket: uploadResult.bucket,
+        storageSize: uploadResult.size,
+        storageMimeType: uploadResult.mimeType,
+        uploadedAt: new Date().toISOString(),
+      });
+
+      setSuccessMessage('Your CV was uploaded securely. Preparing your mock analysis...');
+      window.setTimeout(() => navigate('/analysis/1'), 700);
+    } catch (uploadError) {
+      console.error('Unable to upload CV to Supabase Storage:', uploadError);
+      setError('We could not upload your CV. Please check the file and try again.');
+      setIsUploading(false);
+    }
   };
 
   return (
@@ -145,6 +180,11 @@ export default function UploadCVPage() {
                 {error}
               </div>
             )}
+            {successMessage && (
+              <div role="status" className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+                {successMessage}
+              </div>
+            )}
             <div className="rounded-md border border-brand-100 bg-brand-50 px-4 py-3 text-sm text-brand-700">
               <div className="flex gap-3">
                 <Info className="mt-0.5 size-4 shrink-0" />
@@ -182,9 +222,9 @@ export default function UploadCVPage() {
               name="context"
               placeholder="Add preferred industry, seniority level, location, job description notes, or career goals."
             />
-            <Button type="submit" className="w-full sm:w-auto">
+            <Button type="submit" className="w-full sm:w-auto" disabled={isUploading}>
               <WandSparkles className="size-4" />
-              Run Analysis
+              {isUploading ? 'Uploading CV...' : 'Analyze CV'}
             </Button>
           </form>
         </Card>
@@ -195,14 +235,22 @@ export default function UploadCVPage() {
               <FileText className="size-6 text-brand-700" />
               <div>
                 <h2 className="font-semibold text-slate-950">Mock Analysis Progress</h2>
-                <p className="text-sm text-slate-500">Ready when your CV and target role are added.</p>
+                <p className="text-sm text-slate-500">
+                  {isUploading
+                    ? 'Uploading your CV securely...'
+                    : 'Ready when your CV and target role are added.'}
+                </p>
               </div>
             </div>
             <div className="mt-5 h-2 rounded-full bg-slate-100">
-              <div className={`h-2 rounded-full bg-brand-600 ${isReady ? 'w-full' : 'w-1/4'}`} />
+              {isUploading && <div className="h-2 w-full animate-pulse rounded-full bg-brand-600" />}
             </div>
             <p className="mt-3 text-sm font-medium text-slate-600">
-              {isReady ? 'Ready to generate your mock analysis.' : 'Waiting for required inputs.'}
+              {isUploading
+                ? 'Please keep this page open while the upload finishes.'
+                : isReady
+                  ? 'Ready to upload and generate your mock analysis.'
+                  : 'Waiting for required inputs.'}
             </p>
           </Card>
 

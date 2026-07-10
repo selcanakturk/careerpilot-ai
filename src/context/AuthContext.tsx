@@ -157,13 +157,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setCareerState(emptyMockCareerState);
         return {};
       },
-      completeMockAnalysis: ({ targetRole, fileName, experienceLevel }) => {
+      completeMockAnalysis: ({
+        targetRole,
+        fileName,
+        experienceLevel,
+        storagePath = '',
+        storageFullPath = '',
+        storageBucket = '',
+        storageSize = 0,
+        storageMimeType = '',
+        uploadedAt = '',
+      }) => {
         const nextCareerState: MockCareerState = {
           hasUploadedCV: true,
           hasAnalysis: true,
           latestTargetRole: targetRole,
           latestFileName: fileName,
           latestExperienceLevel: experienceLevel,
+          storagePath,
+          storageFullPath,
+          storageBucket,
+          storageSize,
+          storageMimeType,
+          uploadedAt,
         };
 
         writeMockCareerState(nextCareerState);

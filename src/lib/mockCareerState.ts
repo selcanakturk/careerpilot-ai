@@ -4,6 +4,12 @@ export type MockCareerState = {
   latestTargetRole: string;
   latestFileName: string;
   latestExperienceLevel: string;
+  storagePath: string;
+  storageFullPath: string;
+  storageBucket: string;
+  storageSize: number;
+  storageMimeType: string;
+  uploadedAt: string;
 };
 
 const STORAGE_KEY = 'careerPilot.mockCareerState';
@@ -14,6 +20,12 @@ export const emptyMockCareerState: MockCareerState = {
   latestTargetRole: '',
   latestFileName: '',
   latestExperienceLevel: '',
+  storagePath: '',
+  storageFullPath: '',
+  storageBucket: '',
+  storageSize: 0,
+  storageMimeType: '',
+  uploadedAt: '',
 };
 
 export function readMockCareerState(): MockCareerState {
@@ -37,6 +49,14 @@ export function readMockCareerState(): MockCareerState {
         typeof parsedValue.latestExperienceLevel === 'string'
           ? parsedValue.latestExperienceLevel
           : '',
+      storagePath: typeof parsedValue.storagePath === 'string' ? parsedValue.storagePath : '',
+      storageFullPath:
+        typeof parsedValue.storageFullPath === 'string' ? parsedValue.storageFullPath : '',
+      storageBucket: typeof parsedValue.storageBucket === 'string' ? parsedValue.storageBucket : '',
+      storageSize: typeof parsedValue.storageSize === 'number' ? parsedValue.storageSize : 0,
+      storageMimeType:
+        typeof parsedValue.storageMimeType === 'string' ? parsedValue.storageMimeType : '',
+      uploadedAt: typeof parsedValue.uploadedAt === 'string' ? parsedValue.uploadedAt : '',
     };
   } catch {
     return emptyMockCareerState;

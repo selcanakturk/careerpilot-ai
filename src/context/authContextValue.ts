@@ -25,6 +25,12 @@ export type MockAnalysisPayload = {
   targetRole: string;
   fileName: string;
   experienceLevel: string;
+  storagePath?: string;
+  storageFullPath?: string;
+  storageBucket?: string;
+  storageSize?: number;
+  storageMimeType?: string;
+  uploadedAt?: string;
 };
 
 export type AuthContextValue = {
