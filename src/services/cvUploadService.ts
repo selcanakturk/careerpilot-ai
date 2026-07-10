@@ -28,6 +28,10 @@ function createDatabaseError(message?: string) {
   );
 }
 
+function createFetchError(message?: string) {
+  return new Error(`Unable to load CV uploads${message ? `: ${message}` : '. Please try again.'}`);
+}
+
 export async function createCVUploadRecord(
   input: CreateCVUploadInput,
 ): Promise<CVUploadRecord> {
@@ -50,4 +54,27 @@ export async function createCVUploadRecord(
   }
 
   return data;
+}
+
+export async function getUserCVUploads(userId: string): Promise<CVUploadRecord[]> {
+  const safeUserId = userId.trim();
+
+  if (!safeUserId) {
+    throw new Error('A valid userId is required to load CV uploads.');
+  }
+
+  const { data, error } = await supabase
+    .from('cv_uploads')
+    .select(
+      'id,user_id,file_name,file_path,file_type,file_size,target_role,experience_level,created_at',
+    )
+    .eq('user_id', safeUserId)
+    .order('created_at', { ascending: false })
+    .returns<CVUploadRecord[]>();
+
+  if (error) {
+    throw createFetchError(error.message);
+  }
+
+  return data ?? [];
 }
