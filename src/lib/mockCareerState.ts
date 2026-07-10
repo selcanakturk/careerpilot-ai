@@ -9,6 +9,7 @@ export type MockCareerState = {
   storageBucket: string;
   storageSize: number;
   storageMimeType: string;
+  cvUploadId: string;
   uploadedAt: string;
 };
 
@@ -25,6 +26,7 @@ export const emptyMockCareerState: MockCareerState = {
   storageBucket: '',
   storageSize: 0,
   storageMimeType: '',
+  cvUploadId: '',
   uploadedAt: '',
 };
 
@@ -56,6 +58,7 @@ export function readMockCareerState(): MockCareerState {
       storageSize: typeof parsedValue.storageSize === 'number' ? parsedValue.storageSize : 0,
       storageMimeType:
         typeof parsedValue.storageMimeType === 'string' ? parsedValue.storageMimeType : '',
+      cvUploadId: typeof parsedValue.cvUploadId === 'string' ? parsedValue.cvUploadId : '',
       uploadedAt: typeof parsedValue.uploadedAt === 'string' ? parsedValue.uploadedAt : '',
     };
   } catch {

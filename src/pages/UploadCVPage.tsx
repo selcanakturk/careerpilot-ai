@@ -16,7 +16,8 @@ import FileUpload from '../components/ui/FileUpload';
 import Input from '../components/ui/Input';
 import Textarea from '../components/ui/Textarea';
 import { useAuth } from '../hooks/useAuth';
-import { uploadCV } from '../services/storageService';
+import { createCVUploadRecord } from '../services/cvUploadService';
+import { deleteCV, uploadCV } from '../services/storageService';
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const ACCEPTED_EXTENSIONS = ['pdf', 'doc', 'docx'];
@@ -108,11 +109,24 @@ export default function UploadCVPage() {
 
     setIsUploading(true);
 
+    let uploadedStoragePath = '';
+
     try {
       const uploadResult = await uploadCV(selectedFile, user.id);
+      uploadedStoragePath = uploadResult.path;
+      const targetRoleValue = targetRole.trim();
+      const cvUploadRecord = await createCVUploadRecord({
+        userId: user.id,
+        fileName: selectedFile.name,
+        filePath: uploadResult.path,
+        fileType: getFileType(selectedFile),
+        fileSize: uploadResult.size,
+        targetRole: targetRoleValue,
+        experienceLevel,
+      });
 
       completeMockAnalysis({
-        targetRole: targetRole.trim(),
+        targetRole: targetRoleValue,
         fileName: selectedFile.name,
         experienceLevel,
         storagePath: uploadResult.path,
@@ -120,14 +134,24 @@ export default function UploadCVPage() {
         storageBucket: uploadResult.bucket,
         storageSize: uploadResult.size,
         storageMimeType: uploadResult.mimeType,
+        cvUploadId: cvUploadRecord.id,
         uploadedAt: new Date().toISOString(),
       });
 
-      setSuccessMessage('Your CV was uploaded securely. Preparing your mock analysis...');
+      setSuccessMessage('Your CV was uploaded and saved securely. Preparing your mock analysis...');
       window.setTimeout(() => navigate('/analysis/1'), 700);
-    } catch (uploadError) {
-      console.error('Unable to upload CV to Supabase Storage:', uploadError);
-      setError('We could not upload your CV. Please check the file and try again.');
+    } catch (submitError) {
+      console.error('Unable to complete CV upload flow:', submitError);
+
+      if (uploadedStoragePath) {
+        try {
+          await deleteCV(uploadedStoragePath);
+        } catch (cleanupError) {
+          console.error('Unable to clean up uploaded CV after database failure:', cleanupError);
+        }
+      }
+
+      setError('We could not save your CV upload. Please try again.');
       setIsUploading(false);
     }
   };

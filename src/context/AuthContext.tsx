@@ -166,6 +166,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         storageBucket = '',
         storageSize = 0,
         storageMimeType = '',
+        cvUploadId = '',
         uploadedAt = '',
       }) => {
         const nextCareerState: MockCareerState = {
@@ -179,6 +180,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           storageBucket,
           storageSize,
           storageMimeType,
+          cvUploadId,
           uploadedAt,
         };
 

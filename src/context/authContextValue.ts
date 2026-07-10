@@ -30,6 +30,7 @@ export type MockAnalysisPayload = {
   storageBucket?: string;
   storageSize?: number;
   storageMimeType?: string;
+  cvUploadId?: string;
   uploadedAt?: string;
 };
 
