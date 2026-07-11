@@ -6,7 +6,8 @@ from supabase import Client
 
 from app.core.security import CurrentUser, get_current_user
 from app.core.supabase import get_supabase_client
-from app.schemas.upload import CVUploadResponse
+from app.schemas.upload import CVUploadResponse, PDFTextPreviewResponse
+from app.services import pdf_service
 from app.services.storage_service import download_cv
 
 
@@ -58,6 +59,10 @@ def _get_content_type(file_type: str) -> str:
     return "application/octet-stream"
 
 
+def _is_pdf_upload(file_type: str) -> bool:
+    return file_type.lower() == "pdf"
+
+
 @router.get("/{upload_id}", response_model=CVUploadResponse)
 def get_upload(
     upload_id: UUID,
@@ -97,3 +102,55 @@ def download_upload(
         "content_type": _get_content_type(str(upload["file_type"])),
         "message": "CV downloaded successfully.",
     }
+
+
+@router.get("/{upload_id}/text", response_model=PDFTextPreviewResponse)
+def extract_upload_text(
+    upload_id: UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    supabase_client: Client = Depends(get_supabase_client),
+) -> PDFTextPreviewResponse:
+    upload = _load_owned_upload(upload_id, current_user.id, supabase_client)
+
+    if not _is_pdf_upload(str(upload["file_type"])):
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Only PDF uploads are supported for text extraction.",
+        )
+
+    try:
+        content = download_cv(str(upload["file_path"]))
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="CV file not found.",
+        )
+    except Exception:
+        logger.exception("Unable to download CV file for text extraction.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to download CV file.",
+        )
+
+    try:
+        extracted_text = pdf_service.extract_text_from_pdf(content)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=str(exc),
+        ) from exc
+    except Exception:
+        logger.exception("Unexpected PDF text extraction error.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to extract PDF text.",
+        )
+
+    return PDFTextPreviewResponse(
+        upload_id=upload_id,
+        file_name=str(upload["file_name"]),
+        page_count=extracted_text.page_count,
+        character_count=len(extracted_text.text),
+        text_preview=extracted_text.text[:1500],
+        message="PDF text extracted successfully.",
+    )

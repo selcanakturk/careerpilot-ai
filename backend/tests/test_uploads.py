@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from app.core.security import CurrentUser, get_current_user
 from app.core.supabase import get_supabase_client
 from app.main import app
+from app.services import pdf_service
 from app.services import storage_service
 
 
@@ -91,6 +92,14 @@ def make_upload_record(upload_id: str) -> dict[str, object]:
         "experience_level": "mid",
         "created_at": "2026-07-11T12:00:00Z",
     }
+
+
+def make_non_pdf_upload_record(upload_id: str) -> dict[str, object]:
+    record = make_upload_record(upload_id)
+    record["file_name"] = "selcan-cv.docx"
+    record["file_path"] = "11111111-1111-1111-1111-111111111111/20260711-120000-selcan-cv.docx"
+    record["file_type"] = "DOCX"
+    return record
 
 
 def test_get_upload_authenticated_owner_returns_200() -> None:
@@ -211,3 +220,130 @@ def test_download_upload_without_auth_returns_401(monkeypatch) -> None:
 
     assert response.status_code == 401
     assert fake_storage_client.storage.bucket.downloaded_path == ""
+
+
+def test_extract_upload_text_authenticated_owner_returns_200(monkeypatch) -> None:
+    upload_id = str(uuid4())
+    fake_db_client = FakeSupabaseClient(make_upload_record(upload_id))
+    fake_storage_client = FakeStorageClient(b"%PDF-1.4 test content")
+    app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_supabase_client] = lambda: fake_db_client
+    monkeypatch.setattr(storage_service, "get_supabase_client", lambda: fake_storage_client)
+    monkeypatch.setattr(
+        pdf_service,
+        "extract_text_from_pdf",
+        lambda _content: pdf_service.ExtractedPDFText(
+            text="Selcan Akturk\nProduct manager profile",
+            page_count=1,
+        ),
+    )
+
+    try:
+        response = TestClient(app).get(f"/api/uploads/{upload_id}/text")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "upload_id": upload_id,
+        "file_name": "selcan-cv.pdf",
+        "page_count": 1,
+        "character_count": len("Selcan Akturk\nProduct manager profile"),
+        "text_preview": "Selcan Akturk\nProduct manager profile",
+        "message": "PDF text extracted successfully.",
+    }
+
+
+def test_extract_upload_text_not_found_returns_404(monkeypatch) -> None:
+    upload_id = str(uuid4())
+    fake_storage_client = FakeStorageClient(b"unused")
+    app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_supabase_client] = lambda: FakeSupabaseClient(None)
+    monkeypatch.setattr(storage_service, "get_supabase_client", lambda: fake_storage_client)
+
+    try:
+        response = TestClient(app).get(f"/api/uploads/{upload_id}/text")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "CV upload not found."
+    assert fake_storage_client.storage.bucket.downloaded_path == ""
+
+
+def test_extract_upload_text_without_auth_returns_401(monkeypatch) -> None:
+    upload_id = str(uuid4())
+    fake_storage_client = FakeStorageClient(b"unused")
+    app.dependency_overrides[get_supabase_client] = lambda: FakeSupabaseClient(make_upload_record(upload_id))
+    monkeypatch.setattr(storage_service, "get_supabase_client", lambda: fake_storage_client)
+
+    try:
+        response = TestClient(app).get(f"/api/uploads/{upload_id}/text")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 401
+    assert fake_storage_client.storage.bucket.downloaded_path == ""
+
+
+def test_extract_upload_text_non_pdf_returns_415(monkeypatch) -> None:
+    upload_id = str(uuid4())
+    fake_storage_client = FakeStorageClient(b"unused")
+    app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_supabase_client] = lambda: FakeSupabaseClient(
+        make_non_pdf_upload_record(upload_id)
+    )
+    monkeypatch.setattr(storage_service, "get_supabase_client", lambda: fake_storage_client)
+
+    try:
+        response = TestClient(app).get(f"/api/uploads/{upload_id}/text")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 415
+    assert response.json()["detail"] == "Only PDF uploads are supported for text extraction."
+    assert fake_storage_client.storage.bucket.downloaded_path == ""
+
+
+def test_extract_upload_text_invalid_pdf_returns_422(monkeypatch) -> None:
+    upload_id = str(uuid4())
+    fake_db_client = FakeSupabaseClient(make_upload_record(upload_id))
+    fake_storage_client = FakeStorageClient(b"not a pdf")
+    app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_supabase_client] = lambda: fake_db_client
+    monkeypatch.setattr(storage_service, "get_supabase_client", lambda: fake_storage_client)
+
+    def raise_invalid_pdf(_content: bytes) -> pdf_service.ExtractedPDFText:
+        raise ValueError("The uploaded file could not be read as a valid PDF.")
+
+    monkeypatch.setattr(pdf_service, "extract_text_from_pdf", raise_invalid_pdf)
+
+    try:
+        response = TestClient(app).get(f"/api/uploads/{upload_id}/text")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "The uploaded file could not be read as a valid PDF."
+
+
+def test_extract_upload_text_no_readable_text_returns_422(monkeypatch) -> None:
+    upload_id = str(uuid4())
+    fake_db_client = FakeSupabaseClient(make_upload_record(upload_id))
+    fake_storage_client = FakeStorageClient(b"%PDF image only")
+    app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_supabase_client] = lambda: fake_db_client
+    monkeypatch.setattr(storage_service, "get_supabase_client", lambda: fake_storage_client)
+
+    def raise_no_text(_content: bytes) -> pdf_service.ExtractedPDFText:
+        raise ValueError("No readable text was found in the PDF.")
+
+    monkeypatch.setattr(pdf_service, "extract_text_from_pdf", raise_no_text)
+
+    try:
+        response = TestClient(app).get(f"/api/uploads/{upload_id}/text")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "No readable text was found in the PDF."

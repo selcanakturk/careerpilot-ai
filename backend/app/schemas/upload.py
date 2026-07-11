@@ -15,3 +15,11 @@ class CVUploadResponse(BaseModel):
     experience_level: str
     created_at: datetime
 
+
+class PDFTextPreviewResponse(BaseModel):
+    upload_id: UUID
+    file_name: str
+    page_count: int
+    character_count: int
+    text_preview: str
+    message: str

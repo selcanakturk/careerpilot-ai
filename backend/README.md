@@ -75,6 +75,16 @@ curl -H "Authorization: Bearer ACCESS_TOKEN" \
   http://localhost:8000/api/uploads/UPLOAD_ID/download
 ```
 
+## Test an Authenticated PDF Text Preview
+
+This endpoint downloads the private PDF into backend memory, extracts readable text, and returns
+only a short preview. It does not store extracted text.
+
+```bash
+curl -H "Authorization: Bearer ACCESS_TOKEN" \
+  http://localhost:8000/api/uploads/UPLOAD_ID/text
+```
+
 ## Run Tests
 
 ```bash
