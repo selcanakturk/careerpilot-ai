@@ -4,6 +4,7 @@ from uuid import uuid4
 
 os.environ.setdefault("SUPABASE_URL", "https://example.supabase.co")
 os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "test-service-role-key")
+os.environ.setdefault("OPENAI_API_KEY", "test-openai-api-key")
 
 from fastapi.testclient import TestClient
 

@@ -24,6 +24,18 @@ cp .env.example .env
 
 Fill in real secret values only in `.env`. Do not commit `.env`.
 
+Required environment variables:
+
+```env
+APP_NAME=CareerPilot AI API
+APP_VERSION=0.1.0
+FRONTEND_URL=http://localhost:5173
+SUPABASE_URL=
+SUPABASE_SERVICE_ROLE_KEY=
+OPENAI_API_KEY=
+OPENAI_MODEL=gpt-5-mini
+```
+
 ## Run the Backend
 
 ```bash

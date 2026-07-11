@@ -6,3 +6,4 @@ supabase
 pytest
 httpx
 PyMuPDF
+openai
