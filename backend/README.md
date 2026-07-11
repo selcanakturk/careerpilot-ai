@@ -51,3 +51,22 @@ Expected response:
   "version": "0.1.0"
 }
 ```
+
+## Test an Authenticated Upload Lookup
+
+Use a Supabase access token from an authenticated user session and a CV upload id that belongs to
+that user.
+
+```bash
+curl -H "Authorization: Bearer ACCESS_TOKEN" \
+  http://localhost:8000/api/uploads/UPLOAD_ID
+```
+
+The endpoint returns metadata from `public.cv_uploads` only when the authenticated user owns the
+upload record.
+
+## Run Tests
+
+```bash
+pytest
+```
