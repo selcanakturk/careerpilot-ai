@@ -65,8 +65,18 @@ curl -H "Authorization: Bearer ACCESS_TOKEN" \
 The endpoint returns metadata from `public.cv_uploads` only when the authenticated user owns the
 upload record.
 
+## Test an Authenticated CV Download Check
+
+This endpoint downloads the private Storage file into backend memory and returns metadata only. It
+does not return the file body.
+
+```bash
+curl -H "Authorization: Bearer ACCESS_TOKEN" \
+  http://localhost:8000/api/uploads/UPLOAD_ID/download
+```
+
 ## Run Tests
 
 ```bash
-pytest
+.venv/bin/python -m pytest
 ```
