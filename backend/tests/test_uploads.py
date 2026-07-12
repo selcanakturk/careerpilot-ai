@@ -15,8 +15,10 @@ from app.core.security import CurrentUser, get_current_user
 from app.core.supabase import get_supabase_client
 from app.main import app
 from app.schemas.analysis import CVAnalysisResult, CVAnalysisResponse
+from app.api.routes import uploads as uploads_route
 from app.services import analysis_service
 from app.services import pdf_service
+from app.services import upload_service
 from app.services import storage_service
 from app.services.ai import ai_service
 
@@ -601,3 +603,169 @@ def test_analyze_upload_ai_provider_error_returns_502_and_marks_failed(monkeypat
     assert calls["failures"] == ["The AI analysis service is temporarily unavailable."]
     assert calls["openai"] == 1
     assert calls["complete"] == 0
+
+
+def test_delete_upload_owner_deletes_related_data_in_order(monkeypatch) -> None:
+    upload_id = str(uuid4())
+    fake_db_client = FakeSupabaseClient(make_upload_record(upload_id))
+    calls: list[str] = []
+    app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_supabase_client] = lambda: fake_db_client
+
+    def delete_analyses_for_upload(upload_id: str, user_id: str) -> None:
+        assert user_id == "11111111-1111-1111-1111-111111111111"
+        calls.append(f"analyses:{upload_id}")
+
+    def delete_cv(file_path: str) -> None:
+        assert file_path == "11111111-1111-1111-1111-111111111111/20260711-120000-selcan-cv.pdf"
+        calls.append("storage")
+
+    def delete_upload_record(upload_id: str, user_id: str) -> dict[str, object]:
+        assert user_id == "11111111-1111-1111-1111-111111111111"
+        calls.append(f"upload:{upload_id}")
+        return {"id": upload_id, "file_name": "selcan-cv.pdf"}
+
+    monkeypatch.setattr(analysis_service, "delete_analyses_for_upload", delete_analyses_for_upload)
+    monkeypatch.setattr(uploads_route, "delete_cv", delete_cv)
+    monkeypatch.setattr(upload_service, "delete_upload_record", delete_upload_record)
+
+    try:
+        response = TestClient(app).delete(f"/api/uploads/{upload_id}")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "id": upload_id,
+        "file_name": "selcan-cv.pdf",
+        "message": "CV and related analysis data deleted successfully.",
+    }
+    assert calls == [f"analyses:{upload_id}", "storage", f"upload:{upload_id}"]
+
+
+def test_delete_upload_not_found_returns_404(monkeypatch) -> None:
+    upload_id = str(uuid4())
+    calls: list[str] = []
+    app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_supabase_client] = lambda: FakeSupabaseClient(None)
+    monkeypatch.setattr(analysis_service, "delete_analyses_for_upload", lambda **_kwargs: calls.append("analysis"))
+    monkeypatch.setattr(uploads_route, "delete_cv", lambda *_args: calls.append("storage"))
+    monkeypatch.setattr(upload_service, "delete_upload_record", lambda **_kwargs: calls.append("upload"))
+
+    try:
+        response = TestClient(app).delete(f"/api/uploads/{upload_id}")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "CV upload not found."
+    assert calls == []
+
+
+def test_delete_upload_other_user_record_returns_404(monkeypatch) -> None:
+    upload_id = str(uuid4())
+    calls: list[str] = []
+    app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_supabase_client] = lambda: FakeSupabaseClient(None)
+    monkeypatch.setattr(analysis_service, "delete_analyses_for_upload", lambda **_kwargs: calls.append("analysis"))
+    monkeypatch.setattr(uploads_route, "delete_cv", lambda *_args: calls.append("storage"))
+    monkeypatch.setattr(upload_service, "delete_upload_record", lambda **_kwargs: calls.append("upload"))
+
+    try:
+        response = TestClient(app).delete(f"/api/uploads/{upload_id}")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 404
+    assert calls == []
+
+
+def test_delete_upload_without_auth_returns_401(monkeypatch) -> None:
+    upload_id = str(uuid4())
+    calls: list[str] = []
+    app.dependency_overrides[get_supabase_client] = lambda: FakeSupabaseClient(make_upload_record(upload_id))
+    monkeypatch.setattr(analysis_service, "delete_analyses_for_upload", lambda **_kwargs: calls.append("analysis"))
+    monkeypatch.setattr(uploads_route, "delete_cv", lambda *_args: calls.append("storage"))
+    monkeypatch.setattr(upload_service, "delete_upload_record", lambda **_kwargs: calls.append("upload"))
+
+    try:
+        response = TestClient(app).delete(f"/api/uploads/{upload_id}")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 401
+    assert calls == []
+
+
+def test_delete_upload_missing_storage_file_still_deletes_upload(monkeypatch) -> None:
+    upload_id = str(uuid4())
+    fake_db_client = FakeSupabaseClient(make_upload_record(upload_id))
+    calls: list[str] = []
+    app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_supabase_client] = lambda: fake_db_client
+
+    monkeypatch.setattr(
+        analysis_service,
+        "delete_analyses_for_upload",
+        lambda **_kwargs: calls.append("analysis"),
+    )
+
+    def raise_not_found(_file_path: str) -> None:
+        calls.append("storage")
+        raise FileNotFoundError("missing")
+
+    monkeypatch.setattr(uploads_route, "delete_cv", raise_not_found)
+    monkeypatch.setattr(
+        upload_service,
+        "delete_upload_record",
+        lambda **_kwargs: calls.append("upload") or {"id": upload_id, "file_name": "selcan-cv.pdf"},
+    )
+
+    try:
+        response = TestClient(app).delete(f"/api/uploads/{upload_id}")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert calls == ["analysis", "storage", "upload"]
+
+
+def test_delete_upload_database_error_returns_safe_500(monkeypatch) -> None:
+    upload_id = str(uuid4())
+    fake_db_client = FakeSupabaseClient(make_upload_record(upload_id))
+    app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_supabase_client] = lambda: fake_db_client
+
+    def raise_database_error(**_kwargs: object) -> None:
+        raise RuntimeError("raw database failure")
+
+    monkeypatch.setattr(analysis_service, "delete_analyses_for_upload", raise_database_error)
+
+    try:
+        response = TestClient(app).delete(f"/api/uploads/{upload_id}")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Unable to delete related analysis data."
+
+
+def test_delete_upload_storage_error_returns_safe_500(monkeypatch) -> None:
+    upload_id = str(uuid4())
+    fake_db_client = FakeSupabaseClient(make_upload_record(upload_id))
+    app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_supabase_client] = lambda: fake_db_client
+    monkeypatch.setattr(analysis_service, "delete_analyses_for_upload", lambda **_kwargs: None)
+
+    def raise_storage_error(_file_path: str) -> None:
+        raise RuntimeError("raw storage failure")
+
+    monkeypatch.setattr(uploads_route, "delete_cv", raise_storage_error)
+
+    try:
+        response = TestClient(app).delete(f"/api/uploads/{upload_id}")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Unable to delete stored CV file."

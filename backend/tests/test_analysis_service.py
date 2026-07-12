@@ -51,6 +51,37 @@ class FakeAnalysisClient:
         return self.query
 
 
+class FakeDeleteQuery:
+    def __init__(self, execute_results: list[object]) -> None:
+        self._execute_results = execute_results
+        self.deleted = False
+
+    def select(self, _columns: str) -> "FakeDeleteQuery":
+        return self
+
+    def delete(self) -> "FakeDeleteQuery":
+        self.deleted = True
+        return self
+
+    def eq(self, _column: str, _value: str) -> "FakeDeleteQuery":
+        return self
+
+    def limit(self, _value: int) -> "FakeDeleteQuery":
+        return self
+
+    def execute(self) -> object:
+        return self._execute_results.pop(0)
+
+
+class FakeDeleteAnalysisClient:
+    def __init__(self, execute_results: list[object]) -> None:
+        self.query = FakeDeleteQuery(execute_results)
+
+    def table(self, table_name: str) -> FakeDeleteQuery:
+        assert table_name == "cv_analyses"
+        return self.query
+
+
 def make_analysis_record() -> dict[str, object]:
     upload_id = str(uuid4())
 
@@ -235,3 +266,53 @@ def test_complete_analysis_update_list_returns_first_record(monkeypatch) -> None
     )
 
     assert str(result.id) == record["id"]
+
+
+def test_delete_analysis_existing_record_returns_deleted_ids(monkeypatch) -> None:
+    record = make_analysis_record()
+    fake_client = FakeDeleteAnalysisClient(
+        [
+            SimpleNamespace(data=[{"id": record["id"], "cv_upload_id": record["cv_upload_id"]}]),
+            SimpleNamespace(data=[{"id": record["id"], "cv_upload_id": record["cv_upload_id"]}]),
+        ]
+    )
+    monkeypatch.setattr(analysis_service, "get_supabase_client", lambda: fake_client)
+
+    result = analysis_service.delete_analysis(
+        analysis_id=str(record["id"]),
+        user_id=str(record["user_id"]),
+    )
+
+    assert result == {"id": record["id"], "cv_upload_id": record["cv_upload_id"]}
+    assert fake_client.query.deleted is True
+
+
+def test_delete_analysis_not_found_returns_none(monkeypatch) -> None:
+    fake_client = FakeDeleteAnalysisClient([SimpleNamespace(data=[])])
+    monkeypatch.setattr(analysis_service, "get_supabase_client", lambda: fake_client)
+
+    result = analysis_service.delete_analysis(
+        analysis_id=str(uuid4()),
+        user_id="11111111-1111-1111-1111-111111111111",
+    )
+
+    assert result is None
+    assert fake_client.query.deleted is False
+
+
+def test_delete_analysis_delete_empty_response_returns_existing_ids(monkeypatch) -> None:
+    record = make_analysis_record()
+    fake_client = FakeDeleteAnalysisClient(
+        [
+            SimpleNamespace(data={"id": record["id"], "cv_upload_id": record["cv_upload_id"]}),
+            SimpleNamespace(data=[]),
+        ]
+    )
+    monkeypatch.setattr(analysis_service, "get_supabase_client", lambda: fake_client)
+
+    result = analysis_service.delete_analysis(
+        analysis_id=str(record["id"]),
+        user_id=str(record["user_id"]),
+    )
+
+    assert result == {"id": record["id"], "cv_upload_id": record["cv_upload_id"]}

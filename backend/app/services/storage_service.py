@@ -43,3 +43,21 @@ def download_cv(file_path: str) -> bytes:
     except TypeError as exc:
         logger.exception("Supabase Storage returned an unexpected download payload.")
         raise RuntimeError("Unable to read CV download payload.") from exc
+
+
+def delete_cv(file_path: str) -> None:
+    normalized_path = file_path.strip().lstrip("/")
+
+    if not normalized_path:
+        raise FileNotFoundError("CV file path is empty.")
+
+    supabase_client: Client = get_supabase_client()
+
+    try:
+        supabase_client.storage.from_(CV_STORAGE_BUCKET).remove([normalized_path])
+    except Exception as exc:
+        if _is_not_found_error(exc):
+            raise FileNotFoundError("CV file was not found in storage.") from exc
+
+        logger.exception("Unable to delete CV from Supabase Storage.")
+        raise RuntimeError("Unable to delete CV from storage.") from exc

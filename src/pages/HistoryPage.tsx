@@ -1,12 +1,26 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowRight, Calendar, FileText, Filter, Search, UploadCloud, WandSparkles } from 'lucide-react';
+import {
+  ArrowRight,
+  Calendar,
+  FileText,
+  Filter,
+  Search,
+  Trash2,
+  UploadCloud,
+  WandSparkles,
+  X,
+} from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
 import Input from '../components/ui/Input';
 import { useAuth } from '../hooks/useAuth';
 import { ApiError } from '../services/apiService';
-import { analyzeCV, getCompletedAnalysesForUploadIds } from '../services/analysisService';
+import {
+  analyzeCV,
+  deleteUpload,
+  getCompletedAnalysesForUploadIds,
+} from '../services/analysisService';
 import { getUserCVUploads, type CVUploadRecord } from '../services/cvUploadService';
 import type { CVAnalysis } from '../types/analysis';
 
@@ -62,6 +76,8 @@ export default function HistoryPage() {
   const [analysesByUploadId, setAnalysesByUploadId] = useState<Record<string, CVAnalysis>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [analyzingUploadId, setAnalyzingUploadId] = useState('');
+  const [deletingUploadId, setDeletingUploadId] = useState('');
+  const [pendingDeleteAnalysis, setPendingDeleteAnalysis] = useState<CVAnalysis | null>(null);
   const [error, setError] = useState('');
   const [actionError, setActionError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -108,6 +124,22 @@ export default function HistoryPage() {
     };
   }, [user]);
 
+  useEffect(() => {
+    if (!pendingDeleteAnalysis) {
+      return undefined;
+    }
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setPendingDeleteAnalysis(null);
+      }
+    };
+
+    window.addEventListener('keydown', handleEscape);
+
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [pendingDeleteAnalysis]);
+
   const filteredUploads = useMemo(() => {
     const normalizedQuery = searchQuery.trim().toLowerCase();
 
@@ -141,6 +173,32 @@ export default function HistoryPage() {
       setActionError(getAnalyzeErrorMessage(analyzeError));
     } finally {
       setAnalyzingUploadId('');
+    }
+  };
+
+  const handleDeleteAnalysis = async () => {
+    if (!pendingDeleteAnalysis || deletingUploadId) {
+      return;
+    }
+
+    setActionError('');
+    setDeletingUploadId(pendingDeleteAnalysis.cv_upload_id);
+
+    try {
+      const deleted = await deleteUpload(pendingDeleteAnalysis.cv_upload_id);
+
+      setUploads((currentUploads) => currentUploads.filter((upload) => upload.id !== deleted.id));
+      setAnalysesByUploadId((currentAnalyses) => {
+        const nextAnalyses = { ...currentAnalyses };
+        delete nextAnalyses[deleted.id];
+        return nextAnalyses;
+      });
+      setPendingDeleteAnalysis(null);
+    } catch (deleteError) {
+      console.error('Unable to delete CV:', deleteError);
+      setActionError('We could not delete this CV. Please try again.');
+    } finally {
+      setDeletingUploadId('');
     }
   };
 
@@ -229,6 +287,7 @@ export default function HistoryPage() {
           {filteredUploads.map((upload) => {
             const analysis = analysesByUploadId[upload.id];
             const isAnalyzingCurrentUpload = analyzingUploadId === upload.id;
+            const isDeletingCurrentUpload = deletingUploadId === upload.id;
 
             return (
               <Card key={upload.id} className="h-full p-5">
@@ -279,13 +338,24 @@ export default function HistoryPage() {
                     CV uploaded
                   </span>
                   {analysis ? (
-                    <Link
-                      to={`/analysis/${analysis.id}`}
-                      className="inline-flex min-h-9 items-center justify-center gap-2 rounded-md border border-brand-200 bg-brand-50 px-3 text-sm font-semibold text-brand-700 transition hover:bg-brand-100"
-                    >
-                      View analysis
-                      <ArrowRight className="size-4" />
-                    </Link>
+                    <div className="flex flex-wrap justify-end gap-2">
+                      <Link
+                        to={`/analysis/${analysis.id}`}
+                        className="inline-flex min-h-9 items-center justify-center gap-2 rounded-md border border-brand-200 bg-brand-50 px-3 text-sm font-semibold text-brand-700 transition hover:bg-brand-100"
+                      >
+                        View analysis
+                        <ArrowRight className="size-4" />
+                      </Link>
+                      <button
+                        type="button"
+                        onClick={() => setPendingDeleteAnalysis(analysis)}
+                        disabled={isDeletingCurrentUpload}
+                        className="inline-flex min-h-9 items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <Trash2 className="size-4" />
+                        {isDeletingCurrentUpload ? 'Deleting...' : 'Delete CV'}
+                      </button>
+                    </div>
                   ) : (
                     <button
                       type="button"
@@ -301,6 +371,67 @@ export default function HistoryPage() {
               </Card>
             );
           })}
+        </div>
+      )}
+
+      {pendingDeleteAnalysis && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4 py-6"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !deletingUploadId) {
+              setPendingDeleteAnalysis(null);
+            }
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-cv-title"
+            aria-describedby="delete-cv-description"
+            className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-5 shadow-xl"
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 id="delete-cv-title" className="text-lg font-bold text-slate-950">
+                  Delete CV?
+                </h2>
+                <p id="delete-cv-description" className="mt-2 text-sm leading-6 text-slate-600">
+                  This will permanently delete the uploaded CV, its analysis results, and the
+                  stored file. This action cannot be undone.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPendingDeleteAnalysis(null)}
+                disabled={Boolean(deletingUploadId)}
+                aria-label="Close delete confirmation"
+                className="inline-flex size-9 shrink-0 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <X className="size-5" />
+              </button>
+            </div>
+
+            <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setPendingDeleteAnalysis(null)}
+                disabled={Boolean(deletingUploadId)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={() => void handleDeleteAnalysis()}
+                disabled={Boolean(deletingUploadId)}
+                className="bg-slate-900 hover:bg-slate-800 focus:ring-slate-700"
+              >
+                <Trash2 className="size-4" />
+                {deletingUploadId ? 'Deleting...' : 'Delete CV'}
+              </Button>
+            </div>
+          </div>
         </div>
       )}
     </div>

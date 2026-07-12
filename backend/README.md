@@ -114,6 +114,17 @@ curl -X POST \
   http://localhost:8000/api/uploads/UPLOAD_ID/analyze
 ```
 
+## Delete an Authenticated CV Upload
+
+This endpoint deletes the owned `public.cv_uploads` record, related `public.cv_analyses` records,
+and the private Storage file.
+
+```bash
+curl -X DELETE \
+  -H "Authorization: Bearer ACCESS_TOKEN" \
+  http://localhost:8000/api/uploads/UPLOAD_ID
+```
+
 ## Run Tests
 
 ```bash

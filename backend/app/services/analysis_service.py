@@ -179,3 +179,73 @@ def fail_analysis(analysis_id: str, safe_error_message: str) -> None:
             _extract_response_data(response, "update failed")
     except Exception:
         logger.exception("Unable to mark analysis as failed.")
+
+
+def delete_analysis(analysis_id: str, user_id: str) -> dict[str, object] | None:
+    try:
+        existing_response = (
+            get_supabase_client()
+            .table(ANALYSES_TABLE)
+            .select("id,cv_upload_id")
+            .eq("id", analysis_id)
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.exception("Unable to load analysis before deletion.")
+        raise RuntimeError("Unable to load analysis record.") from exc
+
+    existing = _extract_response_data(existing_response, "select before delete")
+
+    if existing is None:
+        return None
+
+    if not isinstance(existing, dict):
+        logger.error("Unexpected normalized cv_analyses delete lookup response.")
+        raise RuntimeError("Unexpected analysis database response.")
+
+    try:
+        delete_response = (
+            get_supabase_client()
+            .table(ANALYSES_TABLE)
+            .delete()
+            .eq("id", analysis_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+    except Exception as exc:
+        logger.exception("Unable to delete analysis.")
+        raise RuntimeError("Unable to delete analysis record.") from exc
+
+    deleted = _extract_response_data(delete_response, "delete analysis record")
+
+    if deleted is None:
+        deleted = existing
+
+    if not isinstance(deleted, dict):
+        logger.error("Unexpected normalized cv_analyses delete response.")
+        raise RuntimeError("Unexpected analysis database response.")
+
+    return {
+        "id": deleted.get("id", existing.get("id")),
+        "cv_upload_id": deleted.get("cv_upload_id", existing.get("cv_upload_id")),
+    }
+
+
+def delete_analyses_for_upload(upload_id: str, user_id: str) -> None:
+    try:
+        response = (
+            get_supabase_client()
+            .table(ANALYSES_TABLE)
+            .delete()
+            .eq("cv_upload_id", upload_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+    except Exception as exc:
+        logger.exception("Unable to delete analyses for upload.")
+        raise RuntimeError("Unable to delete analysis records.") from exc
+
+    if response is not None:
+        _extract_response_data(response, "delete analyses for upload")

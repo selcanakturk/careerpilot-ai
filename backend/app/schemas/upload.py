@@ -23,3 +23,9 @@ class PDFTextPreviewResponse(BaseModel):
     character_count: int
     text_preview: str
     message: str
+
+
+class DeleteUploadResponse(BaseModel):
+    id: UUID
+    file_name: str
+    message: str

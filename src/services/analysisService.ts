@@ -1,5 +1,5 @@
 import { supabase } from '../lib/supabase';
-import type { CVAnalysis } from '../types/analysis';
+import type { CVAnalysis, DeleteUploadResponse } from '../types/analysis';
 import { apiRequest } from './apiService';
 
 const ANALYSIS_COLUMNS =
@@ -28,6 +28,18 @@ export async function analyzeCV(uploadId: string): Promise<CVAnalysis> {
 
   return apiRequest<CVAnalysis>(`/api/uploads/${safeUploadId}/analyze`, {
     method: 'POST',
+  });
+}
+
+export async function deleteUpload(uploadId: string): Promise<DeleteUploadResponse> {
+  const safeUploadId = uploadId.trim();
+
+  if (!safeUploadId) {
+    throw new Error('A valid upload id is required to delete a CV.');
+  }
+
+  return apiRequest<DeleteUploadResponse>(`/api/uploads/${safeUploadId}`, {
+    method: 'DELETE',
   });
 }
 

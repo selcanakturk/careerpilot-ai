@@ -27,3 +27,9 @@ class CVAnalysisResponse(BaseModel):
     cv_suggestions: list[str]
     created_at: datetime
     updated_at: datetime
+
+
+class DeleteAnalysisResponse(BaseModel):
+    id: UUID
+    cv_upload_id: UUID
+    message: str

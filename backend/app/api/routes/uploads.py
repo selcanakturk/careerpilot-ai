@@ -7,11 +7,12 @@ from supabase import Client
 from app.core.security import CurrentUser, get_current_user
 from app.core.supabase import get_supabase_client
 from app.schemas.analysis import CVAnalysisResponse
-from app.schemas.upload import CVUploadResponse, PDFTextPreviewResponse
+from app.schemas.upload import CVUploadResponse, DeleteUploadResponse, PDFTextPreviewResponse
 from app.services import analysis_service
 from app.services import pdf_service
+from app.services import upload_service
 from app.services.ai import ai_service
-from app.services.storage_service import download_cv
+from app.services.storage_service import delete_cv, download_cv
 
 
 logger = logging.getLogger(__name__)
@@ -75,6 +76,65 @@ def get_upload(
     upload = _load_owned_upload(upload_id, current_user.id, supabase_client)
 
     return CVUploadResponse.model_validate(upload)
+
+
+@router.delete("/{upload_id}", response_model=DeleteUploadResponse)
+def delete_upload(
+    upload_id: UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    supabase_client: Client = Depends(get_supabase_client),
+) -> DeleteUploadResponse:
+    upload = _load_owned_upload(upload_id, current_user.id, supabase_client)
+
+    try:
+        logger.info("Deleting analysis records for upload %s.", upload_id)
+        analysis_service.delete_analyses_for_upload(
+            upload_id=str(upload_id),
+            user_id=current_user.id,
+        )
+    except Exception:
+        logger.exception("Unable to delete analysis records for upload.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to delete related analysis data.",
+        )
+
+    try:
+        logger.info("Deleting Storage file for upload %s.", upload_id)
+        delete_cv(str(upload["file_path"]))
+    except FileNotFoundError:
+        logger.warning("Storage file for upload %s was already missing.", upload_id)
+    except Exception:
+        logger.exception("Unable to delete CV file from storage.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to delete stored CV file.",
+        )
+
+    try:
+        logger.info("Deleting upload record %s.", upload_id)
+        deleted_upload = upload_service.delete_upload_record(
+            upload_id=str(upload_id),
+            user_id=current_user.id,
+        )
+    except Exception:
+        logger.exception("Unable to delete CV upload record.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to delete CV upload.",
+        )
+
+    if deleted_upload is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="CV upload not found.",
+        )
+
+    return DeleteUploadResponse(
+        id=deleted_upload["id"],
+        file_name=str(deleted_upload["file_name"]),
+        message="CV and related analysis data deleted successfully.",
+    )
 
 
 @router.get("/{upload_id}/download")

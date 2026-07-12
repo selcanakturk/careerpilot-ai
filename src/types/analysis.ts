@@ -13,3 +13,9 @@ export type CVAnalysis = {
   created_at: string;
   updated_at: string;
 };
+
+export type DeleteUploadResponse = {
+  id: string;
+  file_name: string;
+  message: string;
+};
