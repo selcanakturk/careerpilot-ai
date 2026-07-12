@@ -7,6 +7,8 @@ os.environ.setdefault("SUPABASE_URL", "https://example.supabase.co")
 os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "test-service-role-key")
 os.environ.setdefault("OPENAI_API_KEY", "test-openai-api-key")
 os.environ.setdefault("OPENAI_MODEL", "gpt-5-mini")
+os.environ.setdefault("GEMINI_API_KEY", "test-gemini-api-key")
+os.environ.setdefault("GEMINI_MODEL", "gemini-2.5-flash")
 
 from app.schemas.analysis import CVAnalysisResult
 from app.services import openai_service

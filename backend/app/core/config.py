@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     supabase_service_role_key: str = ""
     openai_api_key: str = ""
     openai_model: str = "gpt-5-mini"
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.5-flash"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
@@ -25,8 +27,8 @@ class Settings(BaseSettings):
         if not self.supabase_service_role_key:
             missing_values.append("SUPABASE_SERVICE_ROLE_KEY")
 
-        if not self.openai_api_key:
-            missing_values.append("OPENAI_API_KEY")
+        if not self.gemini_api_key:
+            missing_values.append("GEMINI_API_KEY")
 
         if missing_values:
             missing_names = ", ".join(missing_values)

@@ -34,7 +34,13 @@ SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
 OPENAI_API_KEY=
 OPENAI_MODEL=gpt-5-mini
+GEMINI_API_KEY=
+GEMINI_MODEL=gemini-2.5-flash
 ```
+
+The active AI provider for CV analysis is Gemini. OpenAI environment variables are kept for the
+existing OpenAI service code, but the `/api/uploads/{upload_id}/analyze` path now uses Gemini
+through the provider-independent AI service.
 
 ## Run the Backend
 
@@ -95,6 +101,17 @@ only a short preview. It does not store extracted text.
 ```bash
 curl -H "Authorization: Bearer ACCESS_TOKEN" \
   http://localhost:8000/api/uploads/UPLOAD_ID/text
+```
+
+## Run an Authenticated CV Analysis
+
+This endpoint processes an owned PDF upload, extracts text in backend memory, calls the AI analysis
+service, and stores the completed analysis metadata.
+
+```bash
+curl -X POST \
+  -H "Authorization: Bearer ACCESS_TOKEN" \
+  http://localhost:8000/api/uploads/UPLOAD_ID/analyze
 ```
 
 ## Run Tests

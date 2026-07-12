@@ -6,8 +6,11 @@ from supabase import Client
 
 from app.core.security import CurrentUser, get_current_user
 from app.core.supabase import get_supabase_client
+from app.schemas.analysis import CVAnalysisResponse
 from app.schemas.upload import CVUploadResponse, PDFTextPreviewResponse
+from app.services import analysis_service
 from app.services import pdf_service
+from app.services.ai import ai_service
 from app.services.storage_service import download_cv
 
 
@@ -154,3 +157,117 @@ def extract_upload_text(
         text_preview=extracted_text.text[:1500],
         message="PDF text extracted successfully.",
     )
+
+
+def _mark_analysis_failed(processing_analysis: dict[str, object] | None, safe_message: str) -> None:
+    if not processing_analysis:
+        return
+
+    analysis_id = processing_analysis.get("id")
+
+    if analysis_id:
+        analysis_service.fail_analysis(str(analysis_id), safe_message)
+
+
+@router.post("/{upload_id}/analyze", response_model=CVAnalysisResponse, tags=["Analyses"])
+def analyze_upload(
+    upload_id: UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    supabase_client: Client = Depends(get_supabase_client),
+) -> CVAnalysisResponse:
+    upload = _load_owned_upload(upload_id, current_user.id, supabase_client)
+
+    if not _is_pdf_upload(str(upload["file_type"])):
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Only PDF uploads can be analyzed.",
+        )
+
+    try:
+        existing_analysis = analysis_service.get_completed_analysis(
+            user_id=current_user.id,
+            cv_upload_id=str(upload_id),
+        )
+    except Exception:
+        logger.exception("Unable to check existing analysis.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to load analysis.",
+        )
+
+    if existing_analysis is not None:
+        return existing_analysis
+
+    processing_analysis: dict[str, object] | None = None
+
+    try:
+        processing_analysis = analysis_service.create_processing_analysis(
+            user_id=current_user.id,
+            cv_upload_id=str(upload_id),
+            target_role=str(upload["target_role"]),
+        )
+    except Exception:
+        logger.exception("Unable to create processing analysis.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to start analysis.",
+        )
+
+    try:
+        file_bytes = download_cv(str(upload["file_path"]))
+    except FileNotFoundError:
+        _mark_analysis_failed(processing_analysis, "The CV file could not be processed.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="CV file not found.",
+        )
+    except Exception:
+        logger.exception("Unable to download CV for analysis.")
+        _mark_analysis_failed(processing_analysis, "The CV file could not be processed.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to download CV file.",
+        )
+
+    try:
+        extracted = pdf_service.extract_text_from_pdf(file_bytes)
+    except ValueError as exc:
+        _mark_analysis_failed(processing_analysis, "The CV file could not be processed.")
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception:
+        logger.exception("Unexpected PDF parsing error during analysis.")
+        _mark_analysis_failed(processing_analysis, "The CV file could not be processed.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to process CV file.",
+        )
+
+    try:
+        analysis_result = ai_service.analyze_cv(
+            cv_text=extracted.text,
+            target_role=str(upload["target_role"]),
+            experience_level=str(upload["experience_level"]),
+        )
+    except Exception:
+        logger.exception("AI analysis service failed.")
+        _mark_analysis_failed(
+            processing_analysis,
+            "The AI analysis service is temporarily unavailable.",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="The AI analysis service is temporarily unavailable.",
+        )
+
+    try:
+        return analysis_service.complete_analysis(
+            analysis_id=str(processing_analysis["id"]),
+            result=analysis_result,
+        )
+    except Exception:
+        logger.exception("Unable to save completed analysis.")
+        _mark_analysis_failed(processing_analysis, "The analysis could not be completed.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="The analysis could not be completed.",
+        )
