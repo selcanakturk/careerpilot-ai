@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Calendar, FileText, Filter, Search, UploadCloud } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { ArrowRight, Calendar, FileText, Filter, Search, UploadCloud, WandSparkles } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
 import Input from '../components/ui/Input';
 import { useAuth } from '../hooks/useAuth';
+import { ApiError } from '../services/apiService';
+import { analyzeCV, getCompletedAnalysesForUploadIds } from '../services/analysisService';
 import { getUserCVUploads, type CVUploadRecord } from '../services/cvUploadService';
+import type { CVAnalysis } from '../types/analysis';
 
 const filters = ['All', 'Entry-level', 'Mid-level', 'Senior', 'Lead or Manager'];
 
@@ -30,11 +33,37 @@ function getExperienceLabel(value: string) {
   return experienceLabels[value] ?? value;
 }
 
+function getAnalyzeErrorMessage(error: unknown) {
+  if (error instanceof ApiError) {
+    if (error.status === 401) {
+      return 'Your session has expired. Please sign in again.';
+    }
+
+    if (error.status === 404) {
+      return 'The uploaded CV could not be found.';
+    }
+
+    if (error.status === 415) {
+      return 'Only PDF files can be analyzed right now.';
+    }
+
+    if (error.status === 502) {
+      return 'The AI analysis service is temporarily unavailable.';
+    }
+  }
+
+  return 'The analysis could not be completed. Please try again.';
+}
+
 export default function HistoryPage() {
+  const navigate = useNavigate();
   const { user } = useAuth();
   const [uploads, setUploads] = useState<CVUploadRecord[]>([]);
+  const [analysesByUploadId, setAnalysesByUploadId] = useState<Record<string, CVAnalysis>>({});
   const [isLoading, setIsLoading] = useState(true);
+  const [analyzingUploadId, setAnalyzingUploadId] = useState('');
   const [error, setError] = useState('');
+  const [actionError, setActionError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState('All');
 
@@ -53,9 +82,11 @@ export default function HistoryPage() {
 
       try {
         const records = await getUserCVUploads(user.id);
+        const analyses = await getCompletedAnalysesForUploadIds(records.map((record) => record.id));
 
         if (isMounted) {
           setUploads(records);
+          setAnalysesByUploadId(analyses);
         }
       } catch (loadError) {
         console.error('Unable to load CV uploads:', loadError);
@@ -94,14 +125,33 @@ export default function HistoryPage() {
     });
   }, [activeFilter, searchQuery, uploads]);
 
+  const handleAnalyzeUpload = async (uploadId: string) => {
+    if (analyzingUploadId) {
+      return;
+    }
+
+    setActionError('');
+    setAnalyzingUploadId(uploadId);
+
+    try {
+      const analysis = await analyzeCV(uploadId);
+      navigate(`/analysis/${analysis.id}`);
+    } catch (analyzeError) {
+      console.error('Unable to analyze CV upload:', analyzeError);
+      setActionError(getAnalyzeErrorMessage(analyzeError));
+    } finally {
+      setAnalyzingUploadId('');
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div>
         <p className="text-sm font-semibold text-brand-700">Saved Uploads</p>
         <h1 className="mt-1 text-3xl font-bold tracking-tight text-slate-950">CV Upload History</h1>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-          Review the CV files you have uploaded for target roles. AI analysis history will appear
-          here after real analysis generation is connected.
+          Review your uploaded CV files, start AI analysis, and reopen completed career readiness
+          reports.
         </p>
       </div>
 
@@ -131,6 +181,12 @@ export default function HistoryPage() {
           ))}
         </div>
       </div>
+
+      {actionError && (
+        <div role="alert" className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          {actionError}
+        </div>
+      )}
 
       {isLoading ? (
         <Card className="p-8 text-center">
@@ -170,54 +226,81 @@ export default function HistoryPage() {
         </Card>
       ) : (
         <div className="grid gap-4 lg:grid-cols-3">
-          {filteredUploads.map((upload) => (
-            <Card key={upload.id} className="h-full p-5">
-              <div className="flex items-start justify-between gap-4">
-                <div className="min-w-0">
-                  <p className="break-words text-lg font-semibold text-slate-950">
-                    {upload.target_role}
-                  </p>
-                  <p className="mt-2 flex items-start gap-2 break-words text-sm leading-6 text-slate-600">
-                    <FileText className="mt-1 size-4 shrink-0 text-brand-700" />
-                    {upload.file_name}
-                  </p>
-                </div>
-                <span className="shrink-0 rounded-md bg-amber-50 px-3 py-1 text-xs font-bold text-amber-700">
-                  AI analysis not generated yet
-                </span>
-              </div>
+          {filteredUploads.map((upload) => {
+            const analysis = analysesByUploadId[upload.id];
+            const isAnalyzingCurrentUpload = analyzingUploadId === upload.id;
 
-              <div className="mt-5 space-y-3 border-t border-slate-200 pt-4 text-sm text-slate-600">
-                <div className="flex items-center justify-between gap-4">
-                  <span className="font-medium text-slate-500">Experience level</span>
-                  <span className="font-semibold text-slate-800">
-                    {getExperienceLabel(upload.experience_level)}
+            return (
+              <Card key={upload.id} className="h-full p-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="break-words text-lg font-semibold text-slate-950">
+                      {upload.target_role}
+                    </p>
+                    <p className="mt-2 flex items-start gap-2 break-words text-sm leading-6 text-slate-600">
+                      <FileText className="mt-1 size-4 shrink-0 text-brand-700" />
+                      {upload.file_name}
+                    </p>
+                  </div>
+                  <span
+                    className={`shrink-0 rounded-md px-3 py-1 text-xs font-bold ${
+                      analysis ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
+                    }`}
+                  >
+                    {analysis ? 'Completed' : 'AI analysis not generated yet'}
                   </span>
                 </div>
-                <div className="flex items-center justify-between gap-4">
-                  <span className="font-medium text-slate-500">File type</span>
-                  <span className="font-semibold text-slate-800">{upload.file_type}</span>
-                </div>
-                <div className="flex items-center gap-2 text-slate-500">
-                  <Calendar className="size-4" />
-                  {formatDate(upload.created_at)}
-                </div>
-              </div>
 
-              <div className="mt-5 flex items-center justify-between gap-3">
-                <span className="rounded-md bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
-                  CV uploaded
-                </span>
-                <button
-                  type="button"
-                  disabled
-                  className="inline-flex min-h-9 items-center justify-center rounded-md border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-400"
-                >
-                  View upload
-                </button>
-              </div>
-            </Card>
-          ))}
+                <div className="mt-5 space-y-3 border-t border-slate-200 pt-4 text-sm text-slate-600">
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="font-medium text-slate-500">Experience level</span>
+                    <span className="font-semibold text-slate-800">
+                      {getExperienceLabel(upload.experience_level)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="font-medium text-slate-500">File type</span>
+                    <span className="font-semibold text-slate-800">{upload.file_type}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-slate-500">
+                    <Calendar className="size-4" />
+                    {formatDate(upload.created_at)}
+                  </div>
+                  {analysis && (
+                    <div className="flex items-center justify-between gap-4">
+                      <span className="font-medium text-slate-500">Overall score</span>
+                      <span className="font-bold text-slate-950">{analysis.overall_score}%</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-5 flex items-center justify-between gap-3">
+                  <span className="rounded-md bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
+                    CV uploaded
+                  </span>
+                  {analysis ? (
+                    <Link
+                      to={`/analysis/${analysis.id}`}
+                      className="inline-flex min-h-9 items-center justify-center gap-2 rounded-md border border-brand-200 bg-brand-50 px-3 text-sm font-semibold text-brand-700 transition hover:bg-brand-100"
+                    >
+                      View analysis
+                      <ArrowRight className="size-4" />
+                    </Link>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => void handleAnalyzeUpload(upload.id)}
+                      disabled={Boolean(analyzingUploadId)}
+                      className="inline-flex min-h-9 items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:border-brand-200 hover:bg-brand-50 hover:text-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <WandSparkles className="size-4" />
+                      {isAnalyzingCurrentUpload ? 'Analyzing...' : 'Analyze CV'}
+                    </button>
+                  )}
+                </div>
+              </Card>
+            );
+          })}
         </div>
       )}
     </div>

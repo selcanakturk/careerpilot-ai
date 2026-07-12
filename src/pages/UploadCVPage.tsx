@@ -16,6 +16,8 @@ import FileUpload from '../components/ui/FileUpload';
 import Input from '../components/ui/Input';
 import Textarea from '../components/ui/Textarea';
 import { useAuth } from '../hooks/useAuth';
+import { ApiError } from '../services/apiService';
+import { analyzeCV } from '../services/analysisService';
 import { createCVUploadRecord } from '../services/cvUploadService';
 import { deleteCV, uploadCV } from '../services/storageService';
 
@@ -34,15 +36,17 @@ function getFileType(file: File) {
 
 export default function UploadCVPage() {
   const navigate = useNavigate();
-  const { completeMockAnalysis, isAuthenticated, user } = useAuth();
+  const { isAuthenticated, user } = useAuth();
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [targetRole, setTargetRole] = useState('');
   const [experienceLevel, setExperienceLevel] = useState('');
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [isUploading, setIsUploading] = useState(false);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
 
   const isReady = Boolean(selectedFile && targetRole.trim() && experienceLevel);
+  const isSubmitting = isUploading || isAnalyzing;
   const checklist = useMemo(
     () => [
       { label: 'CV uploaded', complete: Boolean(selectedFile), icon: FileText },
@@ -90,7 +94,7 @@ export default function UploadCVPage() {
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    if (isUploading) {
+    if (isSubmitting) {
       return;
     }
 
@@ -107,11 +111,10 @@ export default function UploadCVPage() {
       return;
     }
 
-    setIsUploading(true);
-
     let uploadedStoragePath = '';
 
     try {
+      setIsUploading(true);
       const uploadResult = await uploadCV(selectedFile, user.id);
       uploadedStoragePath = uploadResult.path;
       const targetRoleValue = targetRole.trim();
@@ -125,21 +128,33 @@ export default function UploadCVPage() {
         experienceLevel,
       });
 
-      completeMockAnalysis({
-        targetRole: targetRoleValue,
-        fileName: selectedFile.name,
-        experienceLevel,
-        storagePath: uploadResult.path,
-        storageFullPath: uploadResult.fullPath,
-        storageBucket: uploadResult.bucket,
-        storageSize: uploadResult.size,
-        storageMimeType: uploadResult.mimeType,
-        cvUploadId: cvUploadRecord.id,
-        uploadedAt: new Date().toISOString(),
-      });
+      setSuccessMessage('Your CV was uploaded securely. Starting your AI analysis...');
+      setIsUploading(false);
+      setIsAnalyzing(true);
 
-      setSuccessMessage('Your CV was uploaded and saved securely. Preparing your mock analysis...');
-      window.setTimeout(() => navigate('/analysis/1'), 700);
+      try {
+        const analysis = await analyzeCV(cvUploadRecord.id);
+        setSuccessMessage('Your analysis is ready.');
+        navigate(`/analysis/${analysis.id}`);
+      } catch (analysisError) {
+        console.error('Unable to analyze uploaded CV:', analysisError);
+
+        if (analysisError instanceof ApiError) {
+          if (analysisError.status === 401) {
+            setError('Your session has expired. Please sign in again.');
+          } else if (analysisError.status === 404) {
+            setError('The uploaded CV could not be found.');
+          } else if (analysisError.status === 502) {
+            setError('The AI analysis service is temporarily unavailable.');
+          } else {
+            setError('Your CV was uploaded, but the analysis could not be completed. Please try again.');
+          }
+        } else {
+          setError('Your CV was uploaded, but the analysis could not be completed. Please try again.');
+        }
+      } finally {
+        setIsAnalyzing(false);
+      }
     } catch (submitError) {
       console.error('Unable to complete CV upload flow:', submitError);
 
@@ -152,6 +167,7 @@ export default function UploadCVPage() {
       }
 
       setError('We could not save your CV upload. Please try again.');
+    } finally {
       setIsUploading(false);
     }
   };
@@ -246,9 +262,9 @@ export default function UploadCVPage() {
               name="context"
               placeholder="Add preferred industry, seniority level, location, job description notes, or career goals."
             />
-            <Button type="submit" className="w-full sm:w-auto" disabled={isUploading}>
+            <Button type="submit" className="w-full sm:w-auto" disabled={isSubmitting}>
               <WandSparkles className="size-4" />
-              {isUploading ? 'Uploading CV...' : 'Analyze CV'}
+              {isAnalyzing ? 'Analyzing your CV...' : isUploading ? 'Uploading CV...' : 'Analyze CV'}
             </Button>
           </form>
         </Card>
@@ -258,22 +274,26 @@ export default function UploadCVPage() {
             <div className="flex items-center gap-3">
               <FileText className="size-6 text-brand-700" />
               <div>
-                <h2 className="font-semibold text-slate-950">Mock Analysis Progress</h2>
+                <h2 className="font-semibold text-slate-950">Analysis Progress</h2>
                 <p className="text-sm text-slate-500">
                   {isUploading
                     ? 'Uploading your CV securely...'
-                    : 'Ready when your CV and target role are added.'}
+                    : isAnalyzing
+                      ? 'Analyzing your CV with CareerPilot AI...'
+                      : 'Ready when your CV and target role are added.'}
                 </p>
               </div>
             </div>
             <div className="mt-5 h-2 rounded-full bg-slate-100">
-              {isUploading && <div className="h-2 w-full animate-pulse rounded-full bg-brand-600" />}
+              {isSubmitting && <div className="h-2 w-full animate-pulse rounded-full bg-brand-600" />}
             </div>
             <p className="mt-3 text-sm font-medium text-slate-600">
               {isUploading
                 ? 'Please keep this page open while the upload finishes.'
-                : isReady
-                  ? 'Ready to upload and generate your mock analysis.'
+                : isAnalyzing
+                  ? 'Please keep this page open while the analysis finishes.'
+                  : isReady
+                    ? 'Ready to upload and generate your AI analysis.'
                   : 'Waiting for required inputs.'}
             </p>
           </Card>

@@ -1,5 +1,4 @@
 import {
-  BarChart3,
   FileUp,
   History,
   LayoutDashboard,
@@ -18,7 +17,6 @@ type SidebarProps = {
 const navItems = [
   { label: 'Dashboard', to: '/dashboard', icon: LayoutDashboard },
   { label: 'Upload CV', to: '/upload-cv', icon: FileUp },
-  { label: 'Analysis', to: '/analysis/1', icon: BarChart3 },
   { label: 'History', to: '/history', icon: History },
   { label: 'Profile', to: '/profile', icon: User },
 ];

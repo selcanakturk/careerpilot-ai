@@ -20,7 +20,7 @@ export default function App() {
         <Route element={<AppLayout />}>
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/upload-cv" element={<UploadCVPage />} />
-          <Route path="/analysis/:id" element={<AnalysisResultPage />} />
+          <Route path="/analysis/:analysisId" element={<AnalysisResultPage />} />
           <Route path="/history" element={<HistoryPage />} />
           <Route path="/profile" element={<ProfilePage />} />
         </Route>
