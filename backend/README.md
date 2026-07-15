@@ -36,6 +36,7 @@ OPENAI_API_KEY=
 OPENAI_MODEL=gpt-5-mini
 GEMINI_API_KEY=
 GEMINI_MODEL=gemini-2.5-flash
+GEMINI_FALLBACK_MODEL=gemini-3.1-flash-lite
 ```
 
 The active AI provider for CV analysis is Gemini. OpenAI environment variables are kept for the
@@ -123,6 +124,17 @@ and the private Storage file.
 curl -X DELETE \
   -H "Authorization: Bearer ACCESS_TOKEN" \
   http://localhost:8000/api/uploads/UPLOAD_ID
+```
+
+## Generate an Authenticated Career Roadmap
+
+This endpoint creates a personalized AI career roadmap from an owned completed analysis. If an
+active roadmap already exists for the same analysis, the existing roadmap is returned.
+
+```bash
+curl -X POST \
+  -H "Authorization: Bearer ACCESS_TOKEN" \
+  http://localhost:8000/api/roadmaps/generate/ANALYSIS_ID
 ```
 
 ## Run Tests
