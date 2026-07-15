@@ -1,6 +1,7 @@
 import { ArrowRight, CalendarCheck, Clock } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import type { DashboardOverview, DashboardRoadmapStep } from '../../types/dashboard';
+import type { DashboardOverview } from '../../types/dashboard';
+import { getCurrentDashboardStep, isDashboardRoadmapCompleted } from '../../utils/dashboardOverview';
 import Button from '../ui/Button';
 import Card from '../ui/Card';
 
@@ -8,26 +9,9 @@ type TodaysFocusCardProps = {
   overview: DashboardOverview;
 };
 
-function getCurrentStep(steps: DashboardRoadmapStep[]) {
-  const inProgressStep = steps.find((step) => step.status === 'in_progress');
-
-  if (inProgressStep) {
-    return inProgressStep;
-  }
-
-  const notStartedStep = steps.find((step) => step.status === 'not_started');
-
-  if (notStartedStep) {
-    return notStartedStep;
-  }
-
-  return steps[steps.length - 1] ?? null;
-}
-
 export default function TodaysFocusCard({ overview }: TodaysFocusCardProps) {
-  const currentStep = getCurrentStep(overview.roadmapSteps);
-  const isCompletedRoadmap =
-    overview.roadmapSteps.length > 0 && overview.roadmapSteps.every((step) => step.status === 'completed');
+  const currentStep = getCurrentDashboardStep(overview.roadmapSteps);
+  const isCompletedRoadmap = isDashboardRoadmapCompleted(overview);
 
   if (!overview.activeRoadmap) {
     return (
