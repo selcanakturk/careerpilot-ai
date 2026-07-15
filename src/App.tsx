@@ -9,6 +9,7 @@ import LoginPage from './pages/LoginPage';
 import ProfilePage from './pages/ProfilePage';
 import RegisterPage from './pages/RegisterPage';
 import RoadmapPage from './pages/RoadmapPage';
+import RoadmapWeekPage from './pages/RoadmapWeekPage';
 import UploadCVPage from './pages/UploadCVPage';
 
 export default function App() {
@@ -23,6 +24,7 @@ export default function App() {
           <Route path="/upload-cv" element={<UploadCVPage />} />
           <Route path="/analysis/:analysisId" element={<AnalysisResultPage />} />
           <Route path="/roadmaps/:roadmapId" element={<RoadmapPage />} />
+          <Route path="/roadmaps/:roadmapId/weeks/:stepId" element={<RoadmapWeekPage />} />
           <Route path="/history" element={<HistoryPage />} />
           <Route path="/profile" element={<ProfilePage />} />
         </Route>

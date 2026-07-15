@@ -3,11 +3,14 @@ import { supabase } from '../lib/supabase';
 import type {
   CareerRoadmap,
   RoadmapGenerateResponse,
+  RoadmapDay,
   RoadmapPriority,
   RoadmapResource,
   RoadmapStep,
   RoadmapStepProgressResponse,
   RoadmapStepStatus,
+  RoadmapTask,
+  RoadmapTaskStatus,
 } from '../types/roadmap';
 
 type RoadmapRow = {
@@ -37,6 +40,18 @@ type RoadmapStepRow = {
   mini_project: string;
   updated_at: string | null;
 };
+
+type RoadmapTaskRow = {
+  id: string;
+  step_id: string;
+  day_name: string;
+  task_order: number;
+  title: string;
+  estimated_minutes: number;
+  status: string | null;
+};
+
+const dayOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
 function createRoadmapError(error: unknown): Error {
   if (error instanceof ApiError) {
@@ -80,6 +95,10 @@ function isRoadmapStepStatus(value: string | null): value is RoadmapStepStatus {
   return value === 'not_started' || value === 'in_progress' || value === 'completed';
 }
 
+function isRoadmapTaskStatus(value: string | null): value is RoadmapTaskStatus {
+  return value === 'not_started' || value === 'completed';
+}
+
 function isRoadmapResource(value: unknown): value is RoadmapResource {
   if (!value || typeof value !== 'object') {
     return false;
@@ -93,7 +112,7 @@ function normalizeResources(value: unknown): RoadmapResource[] {
   return Array.isArray(value) ? value.filter(isRoadmapResource) : [];
 }
 
-function mapRoadmapStep(row: RoadmapStepRow): RoadmapStep {
+function mapRoadmapStep(row: RoadmapStepRow, days: RoadmapDay[] = []): RoadmapStep {
   return {
     id: row.id,
     week_number: row.week_number,
@@ -105,8 +124,45 @@ function mapRoadmapStep(row: RoadmapStepRow): RoadmapStep {
     status: isRoadmapStepStatus(row.status) ? row.status : 'not_started',
     resources: normalizeResources(row.resources),
     mini_project: row.mini_project,
+    days,
     updated_at: row.updated_at,
   };
+}
+
+function mapRoadmapTask(row: RoadmapTaskRow): RoadmapTask {
+  return {
+    id: row.id,
+    title: row.title,
+    estimated_minutes: row.estimated_minutes,
+    status: isRoadmapTaskStatus(row.status) ? row.status : 'not_started',
+    task_order: row.task_order,
+  };
+}
+
+function groupTasksByStep(tasks: RoadmapTaskRow[]): Record<string, RoadmapDay[]> {
+  const groupedByStep: Record<string, Record<string, RoadmapTask[]>> = {};
+
+  tasks.forEach((task) => {
+    groupedByStep[task.step_id] ??= {};
+    groupedByStep[task.step_id][task.day_name] ??= [];
+    groupedByStep[task.step_id][task.day_name].push(mapRoadmapTask(task));
+  });
+
+  return Object.fromEntries(
+    Object.entries(groupedByStep).map(([stepId, days]) => [
+      stepId,
+      dayOrder
+        .filter((dayName) => (days[dayName]?.length ?? 0) > 0)
+        .map((dayName) => ({
+          day_name: dayName,
+          tasks: [...days[dayName]].sort((firstTask, secondTask) => {
+            const firstOrder = firstTask.task_order ?? 0;
+            const secondOrder = secondTask.task_order ?? 0;
+            return firstOrder - secondOrder;
+          }),
+        })),
+    ]),
+  );
 }
 
 export async function updateRoadmapStepStatus(
@@ -186,5 +242,20 @@ export async function getRoadmap(roadmapId: string): Promise<RoadmapGenerateResp
     throw new Error('Unable to load roadmap.');
   }
 
-  return mapRoadmapResponse(roadmap, (stepRows ?? []).map(mapRoadmapStep));
+  const { data: taskRows, error: tasksError } = await supabase
+    .from('roadmap_tasks')
+    .select('id,step_id,day_name,task_order,title,estimated_minutes,status')
+    .eq('roadmap_id', safeRoadmapId)
+    .returns<RoadmapTaskRow[]>();
+
+  if (tasksError) {
+    throw new Error('Unable to load roadmap.');
+  }
+
+  const daysByStepId = groupTasksByStep(taskRows ?? []);
+
+  return mapRoadmapResponse(
+    roadmap,
+    (stepRows ?? []).map((step) => mapRoadmapStep(step, step.id ? (daysByStepId[step.id] ?? []) : [])),
+  );
 }

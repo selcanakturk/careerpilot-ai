@@ -164,6 +164,7 @@ export default function RoadmapPage() {
       </Card>
       <RoadmapSummary summary={roadmap.roadmap.summary} />
       <RoadmapTimeline
+        roadmapId={roadmap.id}
         steps={roadmap.roadmap.steps}
         updatingStepId={updatingStepId}
         onStepStatusChange={(stepId, status) => void handleStepStatusChange(stepId, status)}

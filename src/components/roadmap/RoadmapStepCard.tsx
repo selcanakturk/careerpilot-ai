@@ -1,10 +1,11 @@
-import { CheckCircle2, Clock, Hammer, Play } from 'lucide-react';
+import { ArrowRight, CheckCircle2, Clock, Play } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import Card from '../ui/Card';
 import Button from '../ui/Button';
 import type { RoadmapPriority, RoadmapStep, RoadmapStepStatus } from '../../types/roadmap';
-import ResourceList from './ResourceList';
 
 type RoadmapStepCardProps = {
+  roadmapId: string;
   step: RoadmapStep;
   isUpdating: boolean;
   onStatusChange: (stepId: string, status: RoadmapStepStatus) => void;
@@ -30,13 +31,21 @@ const statusLabels: Record<RoadmapStepStatus, string> = {
 };
 
 export default function RoadmapStepCard({
+  roadmapId,
   step,
   isUpdating,
   onStatusChange,
 }: RoadmapStepCardProps) {
+  const navigate = useNavigate();
   const canUpdate = Boolean(step.id);
   const isCompleted = step.status === 'completed';
   const isInProgress = step.status === 'in_progress';
+  const tasks = step.days.flatMap((day) => day.tasks);
+  const totalTasks = tasks.length;
+  const completedTasks = tasks.filter((task) => task.status === 'completed').length;
+  const taskProgressPercentage = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+  const hasDailyPlan = totalTasks > 0;
+  const detailButtonLabel = isCompleted ? 'Review daily plan' : 'Continue daily plan';
 
   const handleStart = () => {
     if (step.id) {
@@ -47,6 +56,12 @@ export default function RoadmapStepCard({
   const handleComplete = () => {
     if (step.id) {
       onStatusChange(step.id, 'completed');
+    }
+  };
+
+  const handleViewDailyPlan = () => {
+    if (step.id) {
+      navigate(`/roadmaps/${roadmapId}/weeks/${step.id}`);
     }
   };
 
@@ -76,6 +91,11 @@ export default function RoadmapStepCard({
             <Clock className="size-3.5" />
             {step.estimated_hours}h
           </span>
+          {hasDailyPlan && (
+            <span className="rounded-md bg-white px-3 py-1 text-xs font-bold text-slate-600 ring-1 ring-slate-100">
+              {totalTasks} tasks
+            </span>
+          )}
         </div>
       </div>
 
@@ -109,27 +129,44 @@ export default function RoadmapStepCard({
             Completed
           </span>
         )}
+        {step.status !== 'not_started' && (
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={handleViewDailyPlan}
+            disabled={!canUpdate}
+            className="w-full sm:w-auto"
+            aria-label={`${detailButtonLabel} for week ${step.week_number}`}
+          >
+            {detailButtonLabel}
+            <ArrowRight className="size-4" />
+          </Button>
+        )}
       </div>
+
+      {hasDailyPlan && (
+        <div className="mt-5 rounded-md bg-white p-4 ring-1 ring-slate-100">
+          <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
+            <div>
+              <p className="text-sm font-bold text-slate-950">
+                {completedTasks} / {totalTasks} tasks completed
+              </p>
+              <p className="mt-1 text-xs font-semibold text-slate-500">{taskProgressPercentage}%</p>
+            </div>
+            <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100 sm:w-44">
+              <div
+                className="h-full rounded-full bg-brand-600 transition-all"
+                style={{ width: `${taskProgressPercentage}%` }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="mt-5 grid gap-4">
         <section>
           <h4 className="text-sm font-bold text-slate-950">Description</h4>
           <p className="mt-2 text-sm leading-6 text-slate-600">{step.description}</p>
-        </section>
-        <section>
-          <h4 className="text-sm font-bold text-slate-950">Reason</h4>
-          <p className="mt-2 text-sm leading-6 text-slate-600">{step.reason}</p>
-        </section>
-        <section className="rounded-md bg-slate-50 p-4">
-          <h4 className="inline-flex items-center gap-2 text-sm font-bold text-slate-950">
-            <Hammer className="size-4 text-brand-700" />
-            Mini Project
-          </h4>
-          <p className="mt-2 text-sm leading-6 text-slate-600">{step.mini_project}</p>
-        </section>
-        <section>
-          <h4 className="mb-3 text-sm font-bold text-slate-950">Resources</h4>
-          <ResourceList resources={step.resources} />
         </section>
       </div>
     </Card>

@@ -2,6 +2,7 @@ import type { RoadmapStep, RoadmapStepStatus } from '../../types/roadmap';
 import RoadmapStepCard from './RoadmapStepCard';
 
 type RoadmapTimelineProps = {
+  roadmapId: string;
   steps: RoadmapStep[];
   updatingStepId: string | null;
   onStepStatusChange: (stepId: string, status: RoadmapStepStatus) => void;
@@ -14,6 +15,7 @@ const dotClasses: Record<RoadmapStepStatus, string> = {
 };
 
 export default function RoadmapTimeline({
+  roadmapId,
   steps,
   updatingStepId,
   onStepStatusChange,
@@ -30,6 +32,7 @@ export default function RoadmapTimeline({
               {step.week_number}
             </span>
             <RoadmapStepCard
+              roadmapId={roadmapId}
               step={step}
               isUpdating={Boolean(step.id) && updatingStepId === step.id}
               onStatusChange={onStepStatusChange}
