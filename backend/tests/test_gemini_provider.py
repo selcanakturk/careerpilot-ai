@@ -31,13 +31,24 @@ class FakeGeminiResponse:
 
 
 class FakeGeminiModels:
-    def __init__(self, response_text: str | None = None, error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        response_text: str | None = None,
+        error: Exception | None = None,
+        failures: list[Exception] | None = None,
+    ) -> None:
         self._response_text = response_text
         self._error = error
+        self._failures = failures or []
         self.generate_call: dict[str, object] | None = None
+        self.model_calls: list[str] = []
 
     def generate_content(self, **kwargs: object) -> FakeGeminiResponse:
         self.generate_call = kwargs
+        self.model_calls.append(str(kwargs["model"]))
+
+        if self._failures:
+            raise self._failures.pop(0)
 
         if self._error:
             raise self._error
@@ -65,6 +76,7 @@ def test_gemini_provider_valid_structured_response_returns_result() -> None:
     assert result.strengths == ["Roadmap ownership"]
     assert models.generate_call is not None
     assert models.generate_call["model"] == "gemini-2.5-flash"
+    assert models.model_calls == ["gemini-2.5-flash"]
 
 
 def test_gemini_provider_empty_cv_text_raises_value_error() -> None:
@@ -104,6 +116,72 @@ def test_gemini_provider_rate_limit_raises_safe_runtime_error() -> None:
 
     with pytest.raises(RuntimeError, match="temporarily rate limited"):
         provider.analyze_cv("CV text", "Product Manager", "Mid-level")
+
+
+def test_gemini_provider_primary_503_retries_then_fallback_succeeds(monkeypatch) -> None:
+    models = FakeGeminiModels(
+        failures=[
+            Exception("503 UNAVAILABLE high demand"),
+            Exception("503 UNAVAILABLE high demand"),
+        ]
+    )
+    provider = GeminiProvider(client=FakeGeminiClient(models))
+    monkeypatch.setattr(
+        "app.services.ai.providers.gemini_provider._sleep_before_retry",
+        lambda _attempt: None,
+    )
+
+    result = provider.analyze_cv("CV text", "Product Manager", "Mid-level")
+
+    assert result.overall_score == 86
+    assert models.model_calls == [
+        "gemini-2.5-flash",
+        "gemini-2.5-flash",
+        "gemini-3.1-flash-lite",
+    ]
+
+
+def test_gemini_provider_primary_and_first_fallback_fail_then_preview_succeeds(monkeypatch) -> None:
+    models = FakeGeminiModels(
+        failures=[
+            Exception("503 UNAVAILABLE high demand"),
+            Exception("503 UNAVAILABLE high demand"),
+            Exception("429 RESOURCE_EXHAUSTED"),
+            Exception("429 RESOURCE_EXHAUSTED"),
+            Exception("429 RESOURCE_EXHAUSTED"),
+        ]
+    )
+    provider = GeminiProvider(client=FakeGeminiClient(models))
+    monkeypatch.setattr(
+        "app.services.ai.providers.gemini_provider._sleep_before_retry",
+        lambda _attempt: None,
+    )
+
+    result = provider.analyze_cv("CV text", "Product Manager", "Mid-level")
+
+    assert result.overall_score == 86
+    assert models.model_calls == [
+        "gemini-2.5-flash",
+        "gemini-2.5-flash",
+        "gemini-3.1-flash-lite",
+        "gemini-3.1-flash-lite",
+        "gemini-3.1-flash-lite",
+        "gemini-3-flash-preview",
+    ]
+
+
+def test_gemini_provider_permanent_400_does_not_fallback(monkeypatch) -> None:
+    models = FakeGeminiModels(error=Exception("400 INVALID_ARGUMENT"))
+    provider = GeminiProvider(client=FakeGeminiClient(models))
+    monkeypatch.setattr(
+        "app.services.ai.providers.gemini_provider._sleep_before_retry",
+        lambda _attempt: None,
+    )
+
+    with pytest.raises(RuntimeError, match="Unable to complete AI analysis right now."):
+        provider.analyze_cv("CV text", "Product Manager", "Mid-level")
+
+    assert models.model_calls == ["gemini-2.5-flash"]
 
 
 def test_gemini_provider_invalid_json_raises_safe_runtime_error() -> None:

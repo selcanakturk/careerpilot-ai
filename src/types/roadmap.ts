@@ -1,4 +1,5 @@
 export type RoadmapPriority = 'low' | 'medium' | 'high' | 'critical';
+export type RoadmapStepStatus = 'not_started' | 'in_progress' | 'completed';
 
 export type RoadmapResource = {
   title: string;
@@ -6,14 +7,17 @@ export type RoadmapResource = {
 };
 
 export type RoadmapStep = {
+  id: string | null;
   week_number: number;
   title: string;
   description: string;
   reason: string;
   estimated_hours: number;
   priority: RoadmapPriority;
+  status: RoadmapStepStatus;
   resources: RoadmapResource[];
   mini_project: string;
+  updated_at: string | null;
 };
 
 export type CareerRoadmap = {
@@ -33,4 +37,12 @@ export type RoadmapGenerateResponse = {
   roadmap: CareerRoadmap;
   created_at: string | null;
   updated_at: string | null;
+};
+
+export type RoadmapStepProgressResponse = {
+  id: string;
+  roadmap_id: string;
+  week_number: number;
+  status: RoadmapStepStatus;
+  updated_at: string;
 };

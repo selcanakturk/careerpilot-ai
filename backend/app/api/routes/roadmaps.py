@@ -4,7 +4,11 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.core.security import CurrentUser, get_current_user
-from app.schemas.roadmap import RoadmapGenerateResponse
+from app.schemas.roadmap import (
+    RoadmapGenerateResponse,
+    RoadmapStepProgressResponse,
+    UpdateRoadmapStepRequest,
+)
 from app.services import roadmap_service
 
 
@@ -77,3 +81,53 @@ def generate_roadmap(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Unable to generate roadmap.",
         )
+
+
+@router.patch(
+    "/{roadmap_id}/steps/{step_id}",
+    response_model=RoadmapStepProgressResponse,
+)
+def update_roadmap_step_status(
+    roadmap_id: UUID,
+    step_id: UUID,
+    payload: UpdateRoadmapStepRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+) -> RoadmapStepProgressResponse:
+    try:
+        roadmap = roadmap_service.get_owned_roadmap(
+            roadmap_id=str(roadmap_id),
+            user_id=current_user.id,
+        )
+    except Exception:
+        logger.exception("Unable to verify roadmap ownership before step update.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to update roadmap step.",
+        )
+
+    if roadmap is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Roadmap not found.",
+        )
+
+    try:
+        updated_step = roadmap_service.update_step_status(
+            roadmap_id=str(roadmap_id),
+            step_id=str(step_id),
+            status=payload.status,
+        )
+    except Exception:
+        logger.exception("Unable to update roadmap step status.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to update roadmap step.",
+        )
+
+    if updated_step is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Roadmap step not found.",
+        )
+
+    return RoadmapStepProgressResponse.model_validate(updated_step)

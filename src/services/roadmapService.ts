@@ -6,6 +6,8 @@ import type {
   RoadmapPriority,
   RoadmapResource,
   RoadmapStep,
+  RoadmapStepProgressResponse,
+  RoadmapStepStatus,
 } from '../types/roadmap';
 
 type RoadmapRow = {
@@ -23,14 +25,17 @@ type RoadmapRow = {
 };
 
 type RoadmapStepRow = {
+  id: string | null;
   week_number: number;
   title: string;
   description: string;
   reason: string;
   estimated_hours: number;
   priority: string;
+  status: string | null;
   resources: unknown;
   mini_project: string;
+  updated_at: string | null;
 };
 
 function createRoadmapError(error: unknown): Error {
@@ -71,6 +76,10 @@ function isRoadmapPriority(value: string): value is RoadmapPriority {
   return ['low', 'medium', 'high', 'critical'].includes(value);
 }
 
+function isRoadmapStepStatus(value: string | null): value is RoadmapStepStatus {
+  return value === 'not_started' || value === 'in_progress' || value === 'completed';
+}
+
 function isRoadmapResource(value: unknown): value is RoadmapResource {
   if (!value || typeof value !== 'object') {
     return false;
@@ -86,15 +95,29 @@ function normalizeResources(value: unknown): RoadmapResource[] {
 
 function mapRoadmapStep(row: RoadmapStepRow): RoadmapStep {
   return {
+    id: row.id,
     week_number: row.week_number,
     title: row.title,
     description: row.description,
     reason: row.reason,
     estimated_hours: row.estimated_hours,
     priority: isRoadmapPriority(row.priority) ? row.priority : 'medium',
+    status: isRoadmapStepStatus(row.status) ? row.status : 'not_started',
     resources: normalizeResources(row.resources),
     mini_project: row.mini_project,
+    updated_at: row.updated_at,
   };
+}
+
+export async function updateRoadmapStepStatus(
+  roadmapId: string,
+  stepId: string,
+  status: RoadmapStepStatus,
+): Promise<RoadmapStepProgressResponse> {
+  return apiRequest<RoadmapStepProgressResponse>(`/api/roadmaps/${roadmapId}/steps/${stepId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status }),
+  });
 }
 
 function mapRoadmapResponse(row: RoadmapRow, steps: RoadmapStep[]): RoadmapGenerateResponse {
@@ -154,7 +177,7 @@ export async function getRoadmap(roadmapId: string): Promise<RoadmapGenerateResp
 
   const { data: stepRows, error: stepsError } = await supabase
     .from('roadmap_steps')
-    .select('week_number,title,description,reason,estimated_hours,priority,resources,mini_project')
+    .select('id,week_number,title,description,reason,estimated_hours,priority,status,resources,mini_project,updated_at')
     .eq('roadmap_id', safeRoadmapId)
     .order('week_number', { ascending: true })
     .returns<RoadmapStepRow[]>();

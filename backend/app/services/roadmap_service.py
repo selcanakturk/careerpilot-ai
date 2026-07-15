@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from functools import lru_cache
 import logging
 import random
@@ -9,15 +10,25 @@ from pydantic import ValidationError
 
 from app.core.config import get_settings
 from app.core.supabase import get_supabase_client
-from app.schemas.roadmap import CareerRoadmap, RoadmapGenerateResponse, RoadmapStep
+from app.schemas.roadmap import CareerRoadmap, RoadmapDay, RoadmapGenerateResponse, RoadmapStep
 
 
 logger = logging.getLogger(__name__)
 
 ROADMAPS_TABLE = "career_roadmaps"
 ROADMAP_STEPS_TABLE = "roadmap_steps"
+ROADMAP_TASKS_TABLE = "roadmap_tasks"
 ANALYSES_TABLE = "cv_analyses"
 UPLOADS_TABLE = "cv_uploads"
+DAY_ORDER = {
+    "Monday": 1,
+    "Tuesday": 2,
+    "Wednesday": 3,
+    "Thursday": 4,
+    "Friday": 5,
+    "Saturday": 6,
+    "Sunday": 7,
+}
 PRIMARY_TEMPORARY_ATTEMPTS = 2
 FALLBACK_TEMPORARY_ATTEMPTS = 3
 BACKOFF_SECONDS = (1.0, 2.0, 4.0)
@@ -31,6 +42,10 @@ The roadmap duration must be at least 4 weeks and at most 24 weeks. Do not use a
 Prioritize the highest-impact gaps first, then sequence learning, proof-building, portfolio work,
 and interview readiness in a practical order.
 Make the plan realistic for the job market and concrete enough for a candidate to follow weekly.
+For every week, include a weekly goal, resources, a mini project, and a practical Monday to Sunday
+daily task plan.
+Every daily task must be one clear action, take 20 to 90 minutes, and each day can have at most
+4 tasks. Do not generate empty days. Keep the weekly total task time aligned with estimated_hours.
 Do not invent career history or skills that are not supported by the analysis.
 Ensure estimated_job_readiness_after is higher than estimated_job_readiness_before when reasonable.
 Each step priority must be one of: low, medium, high, critical.
@@ -238,6 +253,42 @@ def build_gemini_roadmap_schema() -> dict[str, object]:
                             },
                         },
                         "mini_project": {"type": "string"},
+                        "days": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "day_name": {
+                                        "type": "string",
+                                        "enum": [
+                                            "Monday",
+                                            "Tuesday",
+                                            "Wednesday",
+                                            "Thursday",
+                                            "Friday",
+                                            "Saturday",
+                                            "Sunday",
+                                        ],
+                                    },
+                                    "tasks": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "title": {"type": "string"},
+                                                "estimated_minutes": {
+                                                    "type": "integer",
+                                                    "minimum": 20,
+                                                    "maximum": 90,
+                                                },
+                                            },
+                                            "required": ["title", "estimated_minutes"],
+                                        },
+                                    },
+                                },
+                                "required": ["day_name", "tasks"],
+                            },
+                        },
                     },
                     "required": [
                         "week_number",
@@ -248,6 +299,7 @@ def build_gemini_roadmap_schema() -> dict[str, object]:
                         "priority",
                         "resources",
                         "mini_project",
+                        "days",
                     ],
                 },
             },
@@ -451,7 +503,126 @@ def get_active_roadmap(analysis_id: str, user_id: str) -> RoadmapGenerateRespons
     if not isinstance(roadmap, dict):
         raise RuntimeError("Unexpected roadmap database response.")
 
-    return _build_response_from_rows(roadmap, _load_steps(str(roadmap["id"])))
+    roadmap_id = str(roadmap["id"])
+    steps = _load_steps(roadmap_id)
+    tasks = load_tasks(roadmap_id)
+
+    if _is_incomplete_roadmap(steps, tasks):
+        logger.warning(
+            "Incomplete active roadmap detected; deleting partial roadmap.",
+            extra={"roadmap_id": roadmap_id},
+        )
+        delete_partial_roadmap(roadmap_id)
+        return None
+
+    return _build_response_from_rows(
+        roadmap,
+        steps,
+        tasks,
+    )
+
+
+def _is_incomplete_roadmap(
+    step_rows: list[dict[str, object]],
+    task_rows: list[dict[str, object]],
+) -> bool:
+    if not step_rows:
+        return True
+
+    tasks_by_step_id = group_tasks_by_day(task_rows)
+
+    return any(str(step.get("id")) not in tasks_by_step_id for step in step_rows)
+
+
+def delete_partial_roadmap(roadmap_id: str) -> None:
+    try:
+        (
+            get_supabase_client()
+            .table(ROADMAPS_TABLE)
+            .delete()
+            .eq("id", roadmap_id)
+            .execute()
+        )
+    except Exception as exc:
+        logger.exception("Unable to rollback partial roadmap.", extra={"roadmap_id": roadmap_id})
+        raise RuntimeError("Unable to rollback partial roadmap.") from exc
+
+
+def get_owned_roadmap(roadmap_id: str, user_id: str) -> dict[str, object] | None:
+    try:
+        response = (
+            get_supabase_client()
+            .table(ROADMAPS_TABLE)
+            .select("id,user_id")
+            .eq("id", roadmap_id)
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.exception("Unable to load owned roadmap.")
+        raise RuntimeError("Unable to load roadmap.") from exc
+
+    roadmap = _extract_response_data(response, "select owned roadmap")
+
+    if roadmap is None:
+        return None
+
+    if not isinstance(roadmap, dict):
+        raise RuntimeError("Unexpected roadmap database response.")
+
+    return roadmap
+
+
+def update_step_status(
+    roadmap_id: str,
+    step_id: str,
+    status: str,
+) -> dict[str, object] | None:
+    try:
+        step_response = (
+            get_supabase_client()
+            .table(ROADMAP_STEPS_TABLE)
+            .select("id,roadmap_id")
+            .eq("id", step_id)
+            .eq("roadmap_id", roadmap_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.exception("Unable to load roadmap step before status update.")
+        raise RuntimeError("Unable to load roadmap step.") from exc
+
+    step = _extract_response_data(step_response, "select roadmap step")
+
+    if step is None:
+        return None
+
+    if not isinstance(step, dict):
+        raise RuntimeError("Unexpected roadmap step database response.")
+
+    try:
+        update_response = (
+            get_supabase_client()
+            .table(ROADMAP_STEPS_TABLE)
+            .update({"status": status, "updated_at": datetime.now(UTC).isoformat()})
+            .eq("id", step_id)
+            .eq("roadmap_id", roadmap_id)
+            .execute()
+        )
+    except Exception as exc:
+        logger.exception("Unable to update roadmap step status.")
+        raise RuntimeError("Unable to update roadmap step status.") from exc
+
+    updated_step = _extract_response_data(update_response, "update roadmap step status")
+
+    if updated_step is None:
+        raise RuntimeError("Unable to update roadmap step status.")
+
+    if not isinstance(updated_step, dict):
+        raise RuntimeError("Unexpected roadmap step database response.")
+
+    return updated_step
 
 
 def save_roadmap(
@@ -459,6 +630,8 @@ def save_roadmap(
     analysis: dict[str, object],
     roadmap: CareerRoadmap,
 ) -> RoadmapGenerateResponse:
+    saved_roadmap_id: str | None = None
+
     try:
         roadmap_response = (
             get_supabase_client()
@@ -481,11 +654,16 @@ def save_roadmap(
         logger.exception("Unable to save roadmap.")
         raise RuntimeError("Unable to save roadmap.") from exc
 
-    saved_roadmap = _require_row(
-        roadmap_response,
-        "insert roadmap",
-        "Unable to save roadmap.",
-    )
+    try:
+        saved_roadmap = _require_row(
+            roadmap_response,
+            "insert roadmap",
+            "Unable to save roadmap.",
+        )
+        saved_roadmap_id = str(saved_roadmap["id"])
+    except Exception:
+        logger.exception("Unable to read saved roadmap response.")
+        raise RuntimeError("Unable to save roadmap.")
 
     step_payloads = [
         {
@@ -511,14 +689,97 @@ def save_roadmap(
         )
     except Exception as exc:
         logger.exception("Unable to save roadmap steps.")
+        _rollback_partial_roadmap(saved_roadmap_id)
         raise RuntimeError("Unable to save roadmap steps.") from exc
 
     saved_steps = _extract_rows(steps_response, "insert roadmap steps")
 
     if not saved_steps:
+        _rollback_partial_roadmap(saved_roadmap_id)
         raise RuntimeError("Unable to save roadmap steps.")
 
-    return _build_response_from_rows(saved_roadmap, saved_steps)
+    try:
+        saved_tasks = save_tasks(
+            user_id=user_id,
+            analysis_id=str(analysis["id"]),
+            roadmap_id=saved_roadmap_id,
+            generated_steps=roadmap.steps,
+            saved_steps=saved_steps,
+        )
+    except Exception:
+        _rollback_partial_roadmap(saved_roadmap_id)
+        raise
+
+    return _build_response_from_rows(saved_roadmap, saved_steps, saved_tasks)
+
+
+def _rollback_partial_roadmap(roadmap_id: str | None) -> None:
+    if roadmap_id is None:
+        return
+
+    try:
+        delete_partial_roadmap(roadmap_id)
+    except Exception:
+        logger.exception("Rollback failed after roadmap save error.", extra={"roadmap_id": roadmap_id})
+
+
+def save_tasks(
+    user_id: str,
+    analysis_id: str,
+    roadmap_id: str,
+    generated_steps: list[RoadmapStep],
+    saved_steps: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    step_ids_by_week = {
+        int(step["week_number"]): str(step["id"])
+        for step in saved_steps
+        if "id" in step and "week_number" in step
+    }
+
+    task_payloads: list[dict[str, object]] = []
+
+    for step in generated_steps:
+        step_id = step_ids_by_week.get(step.week_number)
+
+        if step_id is None:
+            raise RuntimeError("Unable to save roadmap tasks.")
+
+        for day in step.days:
+            for task_order, task in enumerate(day.tasks, start=1):
+                task_payloads.append(
+                    {
+                        "roadmap_id": roadmap_id,
+                        "step_id": step_id,
+                        "analysis_id": analysis_id,
+                        "user_id": user_id,
+                        "day_name": day.day_name,
+                        "task_order": task_order,
+                        "title": task.title,
+                        "estimated_minutes": task.estimated_minutes,
+                        "status": "not_started",
+                    }
+                )
+
+    if not task_payloads:
+        raise RuntimeError("Unable to save roadmap tasks.")
+
+    try:
+        response = (
+            get_supabase_client()
+            .table(ROADMAP_TASKS_TABLE)
+            .insert(task_payloads)
+            .execute()
+        )
+    except Exception as exc:
+        logger.exception("Unable to save roadmap tasks.")
+        raise RuntimeError("Unable to save roadmap tasks.") from exc
+
+    saved_tasks = _extract_rows(response, "insert roadmap tasks")
+
+    if not saved_tasks:
+        raise RuntimeError("Unable to save roadmap tasks.")
+
+    return saved_tasks
 
 
 def _load_steps(roadmap_id: str) -> list[dict[str, object]]:
@@ -527,7 +788,8 @@ def _load_steps(roadmap_id: str) -> list[dict[str, object]]:
             get_supabase_client()
             .table(ROADMAP_STEPS_TABLE)
             .select(
-                "week_number,title,description,reason,estimated_hours,priority,resources,mini_project"
+                "id,week_number,title,description,reason,estimated_hours,priority,status,"
+                "resources,mini_project,updated_at"
             )
             .eq("roadmap_id", roadmap_id)
             .order("week_number", desc=False)
@@ -540,11 +802,77 @@ def _load_steps(roadmap_id: str) -> list[dict[str, object]]:
     return _extract_rows(response, "select roadmap steps")
 
 
+def load_tasks(roadmap_id: str) -> list[dict[str, object]]:
+    try:
+        response = (
+            get_supabase_client()
+            .table(ROADMAP_TASKS_TABLE)
+            .select("id,step_id,roadmap_id,day_name,task_order,title,estimated_minutes,status,updated_at")
+            .eq("roadmap_id", roadmap_id)
+            .execute()
+        )
+    except Exception as exc:
+        logger.exception("Unable to load roadmap tasks.")
+        raise RuntimeError("Unable to load roadmap tasks.") from exc
+
+    rows = _extract_rows(response, "select roadmap tasks")
+    return sorted(
+        rows,
+        key=lambda row: (
+            str(row.get("step_id", "")),
+            DAY_ORDER.get(str(row.get("day_name", "")), 99),
+            int(row.get("task_order", 0)),
+        ),
+    )
+
+
+def group_tasks_by_day(task_rows: list[dict[str, object]]) -> dict[str, list[RoadmapDay]]:
+    grouped: dict[str, dict[str, list[dict[str, object]]]] = {}
+
+    for task in sorted(
+        task_rows,
+        key=lambda row: (
+            str(row.get("step_id", "")),
+            DAY_ORDER.get(str(row.get("day_name", "")), 99),
+            int(row.get("task_order", 0)),
+        ),
+    ):
+        step_id = str(task["step_id"])
+        day_name = str(task["day_name"])
+        grouped.setdefault(step_id, {}).setdefault(day_name, []).append(task)
+
+    result: dict[str, list[RoadmapDay]] = {}
+
+    for step_id, days in grouped.items():
+        ordered_days = sorted(days.items(), key=lambda item: DAY_ORDER.get(item[0], 99))
+        result[step_id] = [
+            RoadmapDay.model_validate(
+                {
+                    "day_name": day_name,
+                    "tasks": tasks,
+                }
+            )
+            for day_name, tasks in ordered_days
+        ]
+
+    return result
+
+
 def _build_response_from_rows(
     roadmap_row: dict[str, object],
     step_rows: list[dict[str, object]],
+    task_rows: list[dict[str, object]],
 ) -> RoadmapGenerateResponse:
-    steps = [RoadmapStep.model_validate(step) for step in step_rows]
+    days_by_step_id = group_tasks_by_day(task_rows)
+    steps = [
+        RoadmapStep.model_validate(
+            {
+                **step,
+                "days": days_by_step_id.get(str(step.get("id")), []),
+            }
+        )
+        for step in step_rows
+    ]
     roadmap = CareerRoadmap(
         summary=str(roadmap_row["summary"]),
         duration_weeks=int(roadmap_row["duration_weeks"]),

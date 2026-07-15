@@ -11,6 +11,7 @@ os.environ.setdefault("GEMINI_API_KEY", "test-gemini-api-key")
 os.environ.setdefault("GEMINI_MODEL", "gemini-2.5-flash")
 
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from app.core.security import CurrentUser, get_current_user
 from app.main import app
@@ -23,6 +24,38 @@ OWNER_ID = "11111111-1111-1111-1111-111111111111"
 
 def override_current_user() -> CurrentUser:
     return CurrentUser(id=OWNER_ID, email="owner@example.com")
+
+
+def make_days(week_number: int) -> list[dict[str, object]]:
+    return [
+        {
+            "day_name": "Monday",
+            "tasks": [
+                {
+                    "title": f"Review week {week_number} learning objective",
+                    "estimated_minutes": 45,
+                }
+            ],
+        },
+        {
+            "day_name": "Wednesday",
+            "tasks": [
+                {
+                    "title": f"Practice week {week_number} core skill",
+                    "estimated_minutes": 60,
+                }
+            ],
+        },
+        {
+            "day_name": "Friday",
+            "tasks": [
+                {
+                    "title": f"Document week {week_number} project evidence",
+                    "estimated_minutes": 75,
+                }
+            ],
+        },
+    ]
 
 
 def make_roadmap_payload() -> dict[str, object]:
@@ -41,6 +74,7 @@ def make_roadmap_payload() -> dict[str, object]:
                 "priority": "critical",
                 "resources": [{"title": "Product Analytics Guide", "url": "https://example.com/analytics"}],
                 "mini_project": "Create a metric tree for a SaaS onboarding flow.",
+                "days": make_days(1),
             },
             {
                 "week_number": 2,
@@ -51,6 +85,7 @@ def make_roadmap_payload() -> dict[str, object]:
                 "priority": "high",
                 "resources": [{"title": "Experiment Design", "url": "https://example.com/experiments"}],
                 "mini_project": "Draft an A/B test plan for activation.",
+                "days": make_days(2),
             },
             {
                 "week_number": 3,
@@ -61,6 +96,7 @@ def make_roadmap_payload() -> dict[str, object]:
                 "priority": "medium",
                 "resources": [{"title": "STAR Stories", "url": "https://example.com/star"}],
                 "mini_project": "Rewrite three bullets with metrics and tradeoffs.",
+                "days": make_days(3),
             },
             {
                 "week_number": 4,
@@ -71,6 +107,7 @@ def make_roadmap_payload() -> dict[str, object]:
                 "priority": "high",
                 "resources": [{"title": "PM Interview Prep", "url": "https://example.com/interview"}],
                 "mini_project": "Create a one-page product portfolio case summary.",
+                "days": make_days(4),
             },
         ],
     }
@@ -104,6 +141,215 @@ def make_analysis_context(analysis_id: str) -> dict[str, object]:
         "cv_suggestions": ["Add quantified outcomes"],
         "experience_level": "mid",
     }
+
+
+def make_step_update_response(
+    roadmap_id: str,
+    step_id: str,
+    status: str = "completed",
+) -> dict[str, object]:
+    return {
+        "id": step_id,
+        "roadmap_id": roadmap_id,
+        "week_number": 2,
+        "status": status,
+        "updated_at": "2026-07-15T10:00:00Z",
+    }
+
+
+def test_update_roadmap_step_owner_returns_200(monkeypatch) -> None:
+    roadmap_id = str(uuid4())
+    step_id = str(uuid4())
+
+    monkeypatch.setattr(
+        roadmap_service,
+        "get_owned_roadmap",
+        lambda **_kwargs: {"id": roadmap_id, "user_id": OWNER_ID},
+    )
+    monkeypatch.setattr(
+        roadmap_service,
+        "update_step_status",
+        lambda **_kwargs: make_step_update_response(roadmap_id, step_id, "completed"),
+    )
+    app.dependency_overrides[get_current_user] = override_current_user
+
+    try:
+        response = TestClient(app).patch(
+            f"/api/roadmaps/{roadmap_id}/steps/{step_id}",
+            json={"status": "completed"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()["id"] == step_id
+    assert response.json()["roadmap_id"] == roadmap_id
+    assert response.json()["status"] == "completed"
+
+
+def test_update_roadmap_step_accepts_all_valid_statuses(monkeypatch) -> None:
+    roadmap_id = str(uuid4())
+    step_id = str(uuid4())
+    saved_statuses: list[str] = []
+
+    monkeypatch.setattr(
+        roadmap_service,
+        "get_owned_roadmap",
+        lambda **_kwargs: {"id": roadmap_id, "user_id": OWNER_ID},
+    )
+
+    def update_step_status(**kwargs: object) -> dict[str, object]:
+        status = str(kwargs["status"])
+        saved_statuses.append(status)
+        return make_step_update_response(roadmap_id, step_id, status)
+
+    monkeypatch.setattr(roadmap_service, "update_step_status", update_step_status)
+    app.dependency_overrides[get_current_user] = override_current_user
+
+    try:
+        client = TestClient(app)
+        responses = [
+            client.patch(f"/api/roadmaps/{roadmap_id}/steps/{step_id}", json={"status": status})
+            for status in ["not_started", "in_progress", "completed"]
+        ]
+    finally:
+        app.dependency_overrides.clear()
+
+    assert [response.status_code for response in responses] == [200, 200, 200]
+    assert saved_statuses == ["not_started", "in_progress", "completed"]
+
+
+def test_update_roadmap_step_roadmap_not_found_returns_404(monkeypatch) -> None:
+    roadmap_id = str(uuid4())
+    step_id = str(uuid4())
+    monkeypatch.setattr(roadmap_service, "get_owned_roadmap", lambda **_kwargs: None)
+    app.dependency_overrides[get_current_user] = override_current_user
+
+    try:
+        response = TestClient(app).patch(
+            f"/api/roadmaps/{roadmap_id}/steps/{step_id}",
+            json={"status": "completed"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 404
+
+
+def test_update_roadmap_step_other_user_roadmap_returns_404(monkeypatch) -> None:
+    roadmap_id = str(uuid4())
+    step_id = str(uuid4())
+    monkeypatch.setattr(roadmap_service, "get_owned_roadmap", lambda **_kwargs: None)
+    app.dependency_overrides[get_current_user] = override_current_user
+
+    try:
+        response = TestClient(app).patch(
+            f"/api/roadmaps/{roadmap_id}/steps/{step_id}",
+            json={"status": "completed"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 404
+
+
+def test_update_roadmap_step_without_auth_returns_401() -> None:
+    response = TestClient(app).patch(
+        f"/api/roadmaps/{uuid4()}/steps/{uuid4()}",
+        json={"status": "completed"},
+    )
+
+    assert response.status_code == 401
+
+
+def test_update_roadmap_step_invalid_status_returns_422(monkeypatch) -> None:
+    monkeypatch.setattr(
+        roadmap_service,
+        "get_owned_roadmap",
+        lambda **_kwargs: {"id": str(uuid4()), "user_id": OWNER_ID},
+    )
+    app.dependency_overrides[get_current_user] = override_current_user
+
+    try:
+        response = TestClient(app).patch(
+            f"/api/roadmaps/{uuid4()}/steps/{uuid4()}",
+            json={"status": "done"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 422
+
+
+def test_update_roadmap_step_not_found_returns_404(monkeypatch) -> None:
+    roadmap_id = str(uuid4())
+    step_id = str(uuid4())
+    monkeypatch.setattr(
+        roadmap_service,
+        "get_owned_roadmap",
+        lambda **_kwargs: {"id": roadmap_id, "user_id": OWNER_ID},
+    )
+    monkeypatch.setattr(roadmap_service, "update_step_status", lambda **_kwargs: None)
+    app.dependency_overrides[get_current_user] = override_current_user
+
+    try:
+        response = TestClient(app).patch(
+            f"/api/roadmaps/{roadmap_id}/steps/{step_id}",
+            json={"status": "completed"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 404
+
+
+def test_update_roadmap_step_from_different_roadmap_returns_404(monkeypatch) -> None:
+    roadmap_id = str(uuid4())
+    step_id = str(uuid4())
+    monkeypatch.setattr(
+        roadmap_service,
+        "get_owned_roadmap",
+        lambda **_kwargs: {"id": roadmap_id, "user_id": OWNER_ID},
+    )
+    monkeypatch.setattr(roadmap_service, "update_step_status", lambda **_kwargs: None)
+    app.dependency_overrides[get_current_user] = override_current_user
+
+    try:
+        response = TestClient(app).patch(
+            f"/api/roadmaps/{roadmap_id}/steps/{step_id}",
+            json={"status": "completed"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 404
+
+
+def test_update_roadmap_step_supabase_error_returns_500(monkeypatch) -> None:
+    roadmap_id = str(uuid4())
+    step_id = str(uuid4())
+    monkeypatch.setattr(
+        roadmap_service,
+        "get_owned_roadmap",
+        lambda **_kwargs: {"id": roadmap_id, "user_id": OWNER_ID},
+    )
+
+    def raise_update_error(**_kwargs: object) -> None:
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(roadmap_service, "update_step_status", raise_update_error)
+    app.dependency_overrides[get_current_user] = override_current_user
+
+    try:
+        response = TestClient(app).patch(
+            f"/api/roadmaps/{roadmap_id}/steps/{step_id}",
+            json={"status": "completed"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Unable to update roadmap step."
 
 
 def test_generate_roadmap_owner_returns_200(monkeypatch) -> None:
@@ -241,8 +487,65 @@ def test_generate_career_roadmap_uses_mock_gemini(monkeypatch) -> None:
 
     assert result.duration_weeks == 4
     assert len(result.steps) == 4
+    assert result.steps[0].days[0].day_name == "Monday"
+    assert result.steps[0].days[0].tasks[0].estimated_minutes == 45
     assert fake_client.models.call["model"] == "gemini-2.5-flash"
     assert fake_client.models.model_calls == ["gemini-2.5-flash"]
+
+
+def test_career_roadmap_requires_days() -> None:
+    payload = make_roadmap_payload()
+    step = payload["steps"][0]
+    assert isinstance(step, dict)
+    step.pop("days")
+
+    try:
+        CareerRoadmap.model_validate(payload)
+    except ValidationError:
+        return
+
+    raise AssertionError("Roadmap validation should fail when a step has no days.")
+
+
+def test_career_roadmap_rejects_empty_day_tasks() -> None:
+    payload = make_roadmap_payload()
+    step = payload["steps"][0]
+    assert isinstance(step, dict)
+    days = step["days"]
+    assert isinstance(days, list)
+    first_day = days[0]
+    assert isinstance(first_day, dict)
+    first_day["tasks"] = []
+
+    try:
+        CareerRoadmap.model_validate(payload)
+    except ValidationError:
+        return
+
+    raise AssertionError("Roadmap validation should fail when a day has no tasks.")
+
+
+def test_career_roadmap_rejects_invalid_task_values() -> None:
+    payload = make_roadmap_payload()
+    step = payload["steps"][0]
+    assert isinstance(step, dict)
+    days = step["days"]
+    assert isinstance(days, list)
+    first_day = days[0]
+    assert isinstance(first_day, dict)
+    tasks = first_day["tasks"]
+    assert isinstance(tasks, list)
+    first_task = tasks[0]
+    assert isinstance(first_task, dict)
+    first_task["title"] = ""
+    first_task["estimated_minutes"] = -10
+
+    try:
+        CareerRoadmap.model_validate(payload)
+    except ValidationError:
+        return
+
+    raise AssertionError("Roadmap validation should fail for blank title and negative duration.")
 
 
 def _collect_schema_keys(value: object) -> set[str]:
@@ -348,6 +651,10 @@ def test_gemini_roadmap_schema_uses_only_supported_basic_types() -> None:
         "resources",
         "url",
         "mini_project",
+        "days",
+        "day_name",
+        "tasks",
+        "estimated_minutes",
     }
 
 
@@ -571,6 +878,106 @@ def test_generate_roadmap_primary_quota_fallback_success_returns_200(monkeypatch
     assert models.model_calls == ["gemini-2.5-flash", "gemini-3.1-flash-lite"]
 
 
+def test_group_tasks_by_day_orders_days_and_tasks() -> None:
+    step_id = str(uuid4())
+    rows = [
+        {
+            "id": str(uuid4()),
+            "step_id": step_id,
+            "day_name": "Wednesday",
+            "task_order": 2,
+            "title": "Second Wednesday task",
+            "estimated_minutes": 30,
+            "status": "not_started",
+        },
+        {
+            "id": str(uuid4()),
+            "step_id": step_id,
+            "day_name": "Monday",
+            "task_order": 1,
+            "title": "First Monday task",
+            "estimated_minutes": 45,
+            "status": "completed",
+        },
+        {
+            "id": str(uuid4()),
+            "step_id": step_id,
+            "day_name": "Wednesday",
+            "task_order": 1,
+            "title": "First Wednesday task",
+            "estimated_minutes": 60,
+            "status": "not_started",
+        },
+    ]
+
+    grouped = roadmap_service.group_tasks_by_day(rows)
+
+    assert list(grouped) == [step_id]
+    assert [day.day_name for day in grouped[step_id]] == ["Monday", "Wednesday"]
+    assert [task.title for task in grouped[step_id][1].tasks] == [
+        "First Wednesday task",
+        "Second Wednesday task",
+    ]
+    assert grouped[step_id][0].tasks[0].status == "completed"
+
+
+class FakeLoadTasksQuery:
+    def __init__(self, rows: list[dict[str, object]]) -> None:
+        self.rows = rows
+
+    def select(self, _columns: str) -> "FakeLoadTasksQuery":
+        return self
+
+    def eq(self, _column: str, _value: str) -> "FakeLoadTasksQuery":
+        return self
+
+    def execute(self) -> SimpleNamespace:
+        return SimpleNamespace(data=self.rows)
+
+
+class FakeLoadTasksClient:
+    def __init__(self, rows: list[dict[str, object]]) -> None:
+        self.rows = rows
+
+    def table(self, table_name: str) -> FakeLoadTasksQuery:
+        assert table_name == "roadmap_tasks"
+        return FakeLoadTasksQuery(self.rows)
+
+
+def test_load_tasks_returns_tasks_sorted_by_day_and_order(monkeypatch) -> None:
+    roadmap_id = str(uuid4())
+    step_id = str(uuid4())
+    rows = [
+        {
+            "id": str(uuid4()),
+            "step_id": step_id,
+            "roadmap_id": roadmap_id,
+            "day_name": "Friday",
+            "task_order": 1,
+            "title": "Friday task",
+            "estimated_minutes": 30,
+            "status": "not_started",
+            "updated_at": "2026-07-15T10:00:00Z",
+        },
+        {
+            "id": str(uuid4()),
+            "step_id": step_id,
+            "roadmap_id": roadmap_id,
+            "day_name": "Monday",
+            "task_order": 1,
+            "title": "Monday task",
+            "estimated_minutes": 30,
+            "status": "not_started",
+            "updated_at": "2026-07-15T10:00:00Z",
+        },
+    ]
+    monkeypatch.setattr(roadmap_service, "get_supabase_client", lambda: FakeLoadTasksClient(rows))
+
+    loaded = roadmap_service.load_tasks(roadmap_id)
+
+    assert [task["day_name"] for task in loaded] == ["Monday", "Friday"]
+
+
 class FakeTableQuery:
     def __init__(self, table_name: str, client: "FakeRoadmapClient") -> None:
         self.table_name = table_name
@@ -581,7 +988,23 @@ class FakeTableQuery:
         self.payload = payload
         return self
 
+    def delete(self) -> "FakeTableQuery":
+        self.client.operations.append((self.table_name, "delete"))
+        self.is_delete = True
+        return self
+
+    def eq(self, _column: str, _value: str) -> "FakeTableQuery":
+        return self
+
     def execute(self) -> SimpleNamespace:
+        if getattr(self, "is_delete", False):
+            if self.client.raise_on_delete:
+                raise RuntimeError("delete failed")
+            return SimpleNamespace(data=[{"id": self.client.roadmap_id}])
+
+        if self.table_name in self.client.raise_on_insert_tables:
+            raise RuntimeError(f"{self.table_name} insert failed")
+
         if self.table_name == "career_roadmaps":
             payload = self.payload
             assert isinstance(payload, dict)
@@ -599,14 +1022,45 @@ class FakeTableQuery:
         if self.table_name == "roadmap_steps":
             payload = self.payload
             assert isinstance(payload, list)
-            return SimpleNamespace(data=payload)
+            return SimpleNamespace(
+                data=[
+                    {
+                        **step,
+                        "id": self.client.step_ids[index],
+                        "status": "not_started",
+                        "updated_at": "2026-07-13T10:00:00Z",
+                    }
+                    for index, step in enumerate(payload)
+                ]
+            )
+
+        if self.table_name == "roadmap_tasks":
+            payload = self.payload
+            assert isinstance(payload, list)
+            return SimpleNamespace(
+                data=[
+                    {
+                        **task,
+                        "id": str(uuid4()),
+                        "updated_at": "2026-07-13T10:00:00Z",
+                    }
+                    for task in payload
+                ]
+            )
 
         raise AssertionError(f"Unexpected table {self.table_name}")
 
 
 class FakeRoadmapClient:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        raise_on_insert_tables: set[str] | None = None,
+        raise_on_delete: bool = False,
+    ) -> None:
         self.roadmap_id = str(uuid4())
+        self.step_ids = [str(uuid4()) for _ in range(4)]
+        self.raise_on_insert_tables = raise_on_insert_tables or set()
+        self.raise_on_delete = raise_on_delete
         self.operations: list[tuple[str, object]] = []
 
     def table(self, table_name: str) -> FakeTableQuery:
@@ -631,6 +1085,7 @@ def test_save_roadmap_persists_roadmap_and_steps(monkeypatch) -> None:
     assert [operation[0] for operation in fake_client.operations] == [
         "career_roadmaps",
         "roadmap_steps",
+        "roadmap_tasks",
     ]
 
     roadmap_payload = fake_client.operations[0][1]
@@ -646,3 +1101,231 @@ def test_save_roadmap_persists_roadmap_and_steps(monkeypatch) -> None:
     assert "analysis_id" not in step_payload[0]
     assert "user_id" not in step_payload[0]
     assert step_payload[0]["resources"] == [{"title": "Product Analytics Guide", "url": "https://example.com/analytics"}]
+
+    task_payload = fake_client.operations[2][1]
+    assert isinstance(task_payload, list)
+    assert len(task_payload) == 12
+    assert task_payload[0]["roadmap_id"] == fake_client.roadmap_id
+    assert task_payload[0]["step_id"] == fake_client.step_ids[0]
+    assert task_payload[0]["analysis_id"] == analysis_id
+    assert task_payload[0]["user_id"] == OWNER_ID
+    assert task_payload[0]["day_name"] == "Monday"
+    assert task_payload[0]["task_order"] == 1
+    assert task_payload[0]["status"] == "not_started"
+    assert result.roadmap.steps[0].days[0].tasks[0].status == "not_started"
+
+
+def test_save_roadmap_rolls_back_when_step_save_fails(monkeypatch) -> None:
+    analysis_id = str(uuid4())
+    fake_client = FakeRoadmapClient(raise_on_insert_tables={"roadmap_steps"})
+    monkeypatch.setattr(roadmap_service, "get_supabase_client", lambda: fake_client)
+
+    try:
+        roadmap_service.save_roadmap(
+            user_id=OWNER_ID,
+            analysis=make_analysis_context(analysis_id),
+            roadmap=CareerRoadmap.model_validate(make_roadmap_payload()),
+        )
+    except RuntimeError as exc:
+        assert "Unable to save roadmap steps." in str(exc)
+    else:
+        raise AssertionError("Expected roadmap save to fail.")
+
+    assert fake_client.operations[-1] == ("career_roadmaps", "delete")
+
+
+def test_save_roadmap_rolls_back_when_task_save_fails(monkeypatch) -> None:
+    analysis_id = str(uuid4())
+    fake_client = FakeRoadmapClient(raise_on_insert_tables={"roadmap_tasks"})
+    monkeypatch.setattr(roadmap_service, "get_supabase_client", lambda: fake_client)
+
+    try:
+        roadmap_service.save_roadmap(
+            user_id=OWNER_ID,
+            analysis=make_analysis_context(analysis_id),
+            roadmap=CareerRoadmap.model_validate(make_roadmap_payload()),
+        )
+    except RuntimeError as exc:
+        assert "Unable to save roadmap tasks." in str(exc)
+    else:
+        raise AssertionError("Expected roadmap save to fail.")
+
+    assert fake_client.operations[-1] == ("career_roadmaps", "delete")
+
+
+def test_save_roadmap_rollback_error_does_not_hide_original_error(monkeypatch) -> None:
+    analysis_id = str(uuid4())
+    fake_client = FakeRoadmapClient(
+        raise_on_insert_tables={"roadmap_tasks"},
+        raise_on_delete=True,
+    )
+    monkeypatch.setattr(roadmap_service, "get_supabase_client", lambda: fake_client)
+
+    try:
+        roadmap_service.save_roadmap(
+            user_id=OWNER_ID,
+            analysis=make_analysis_context(analysis_id),
+            roadmap=CareerRoadmap.model_validate(make_roadmap_payload()),
+        )
+    except RuntimeError as exc:
+        assert "Unable to save roadmap tasks." in str(exc)
+    else:
+        raise AssertionError("Expected roadmap save to fail.")
+
+    assert fake_client.operations[-1] == ("career_roadmaps", "delete")
+
+
+def test_get_active_roadmap_returns_none_and_deletes_incomplete_roadmap(monkeypatch) -> None:
+    roadmap_id = str(uuid4())
+    step_id = str(uuid4())
+    deletes: list[str] = []
+
+    monkeypatch.setattr(
+        roadmap_service,
+        "_load_steps",
+        lambda _roadmap_id: [
+            {
+                "id": step_id,
+                "week_number": 1,
+                "title": "Week one",
+                "description": "Description",
+                "reason": "Reason",
+                "estimated_hours": 3,
+                "priority": "high",
+                "status": "not_started",
+                "resources": [],
+                "mini_project": "Mini project",
+                "updated_at": "2026-07-15T10:00:00Z",
+            }
+        ],
+    )
+    monkeypatch.setattr(roadmap_service, "load_tasks", lambda _roadmap_id: [])
+    monkeypatch.setattr(roadmap_service, "delete_partial_roadmap", lambda roadmap_id: deletes.append(roadmap_id))
+
+    class ActiveRoadmapQuery:
+        def select(self, _columns: str) -> "ActiveRoadmapQuery":
+            return self
+
+        def eq(self, _column: str, _value: str) -> "ActiveRoadmapQuery":
+            return self
+
+        def order(self, _column: str, desc: bool) -> "ActiveRoadmapQuery":
+            return self
+
+        def limit(self, _count: int) -> "ActiveRoadmapQuery":
+            return self
+
+        def execute(self) -> SimpleNamespace:
+            return SimpleNamespace(
+                data=[
+                    {
+                        "id": roadmap_id,
+                        "user_id": OWNER_ID,
+                        "analysis_id": str(uuid4()),
+                        "target_role": "Product Manager",
+                        "duration_weeks": 4,
+                        "summary": "Summary",
+                        "status": "active",
+                        "estimated_job_readiness_before": 60,
+                        "estimated_job_readiness_after": 80,
+                    }
+                ]
+            )
+
+    class ActiveRoadmapClient:
+        def table(self, table_name: str) -> ActiveRoadmapQuery:
+            assert table_name == "career_roadmaps"
+            return ActiveRoadmapQuery()
+
+    monkeypatch.setattr(roadmap_service, "get_supabase_client", lambda: ActiveRoadmapClient())
+
+    result = roadmap_service.get_active_roadmap(str(uuid4()), OWNER_ID)
+
+    assert result is None
+    assert deletes == [roadmap_id]
+
+
+def test_get_active_roadmap_with_tasks_returns_roadmap(monkeypatch) -> None:
+    roadmap_id = str(uuid4())
+    step_ids = [str(uuid4()) for _ in range(4)]
+
+    monkeypatch.setattr(
+        roadmap_service,
+        "_load_steps",
+        lambda _roadmap_id: [
+            {
+                "id": step_id,
+                "week_number": index + 1,
+                "title": f"Week {index + 1}",
+                "description": "Description",
+                "reason": "Reason",
+                "estimated_hours": 3,
+                "priority": "high",
+                "status": "not_started",
+                "resources": [],
+                "mini_project": "Mini project",
+                "updated_at": "2026-07-15T10:00:00Z",
+            }
+            for index, step_id in enumerate(step_ids)
+        ],
+    )
+    monkeypatch.setattr(
+        roadmap_service,
+        "load_tasks",
+        lambda _roadmap_id: [
+            {
+                "id": str(uuid4()),
+                "step_id": step_id,
+                "roadmap_id": roadmap_id,
+                "day_name": "Monday",
+                "task_order": 1,
+                "title": f"Do task {index + 1}",
+                "estimated_minutes": 30,
+                "status": "not_started",
+                "updated_at": "2026-07-15T10:00:00Z",
+            }
+            for index, step_id in enumerate(step_ids)
+        ],
+    )
+
+    class ActiveRoadmapQuery:
+        def select(self, _columns: str) -> "ActiveRoadmapQuery":
+            return self
+
+        def eq(self, _column: str, _value: str) -> "ActiveRoadmapQuery":
+            return self
+
+        def order(self, _column: str, desc: bool) -> "ActiveRoadmapQuery":
+            return self
+
+        def limit(self, _count: int) -> "ActiveRoadmapQuery":
+            return self
+
+        def execute(self) -> SimpleNamespace:
+            return SimpleNamespace(
+                data=[
+                    {
+                        "id": roadmap_id,
+                        "user_id": OWNER_ID,
+                        "analysis_id": str(uuid4()),
+                        "target_role": "Product Manager",
+                        "duration_weeks": 4,
+                        "summary": "Summary",
+                        "status": "active",
+                        "estimated_job_readiness_before": 60,
+                        "estimated_job_readiness_after": 80,
+                    }
+                ]
+            )
+
+    class ActiveRoadmapClient:
+        def table(self, table_name: str) -> ActiveRoadmapQuery:
+            assert table_name == "career_roadmaps"
+            return ActiveRoadmapQuery()
+
+    monkeypatch.setattr(roadmap_service, "get_supabase_client", lambda: ActiveRoadmapClient())
+
+    result = roadmap_service.get_active_roadmap(str(uuid4()), OWNER_ID)
+
+    assert result is not None
+    assert result.roadmap.steps[0].days[0].tasks[0].title == "Do task 1"
