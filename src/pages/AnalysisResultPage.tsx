@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, CheckCircle2, FilePenLine, Gauge, Lightbulb } from 'lucide-react';
-import { Link, useParams } from 'react-router-dom';
+import { AlertTriangle, CheckCircle2, FilePenLine, Gauge, Lightbulb, Map } from 'lucide-react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
+import { ApiError } from '../services/apiService';
 import { getAnalysisById } from '../services/analysisService';
+import { generateRoadmap } from '../services/roadmapService';
 import type { CVAnalysis } from '../types/analysis';
 
 function renderList(items: string[], tone: 'success' | 'warning' | 'neutral' = 'neutral') {
@@ -29,11 +31,14 @@ function renderList(items: string[], tone: 'success' | 'warning' | 'neutral' = '
 }
 
 export default function AnalysisResultPage() {
+  const navigate = useNavigate();
   const { analysisId, id } = useParams();
   const activeAnalysisId = analysisId ?? id ?? '';
   const [analysis, setAnalysis] = useState<CVAnalysis | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isGeneratingRoadmap, setIsGeneratingRoadmap] = useState(false);
   const [error, setError] = useState('');
+  const [roadmapError, setRoadmapError] = useState('');
 
   useEffect(() => {
     let isMounted = true;
@@ -74,6 +79,40 @@ export default function AnalysisResultPage() {
     };
   }, [activeAnalysisId]);
 
+  const handleGenerateRoadmap = async () => {
+    if (!analysis || isGeneratingRoadmap) {
+      return;
+    }
+
+    setRoadmapError('');
+    setIsGeneratingRoadmap(true);
+
+    try {
+      const response = await generateRoadmap(analysis.id);
+      navigate(`/roadmaps/${response.id}`);
+    } catch (generateError) {
+      if (generateError instanceof ApiError) {
+        if (generateError.status === 401) {
+          setRoadmapError('Your session has expired. Please sign in again.');
+        } else if (generateError.status === 404) {
+          setRoadmapError('The analysis could not be found.');
+        } else if (generateError.status === 503) {
+          setRoadmapError('The AI roadmap service is currently busy. Please try again in a moment.');
+        } else if (generateError.status === 500) {
+          setRoadmapError('Unable to generate roadmap.');
+        } else {
+          setRoadmapError(generateError.message || 'Unable to generate roadmap.');
+        }
+      } else if (generateError instanceof Error) {
+        setRoadmapError(generateError.message);
+      } else {
+        setRoadmapError('Unable to generate roadmap.');
+      }
+    } finally {
+      setIsGeneratingRoadmap(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <Card className="p-8 text-center">
@@ -112,12 +151,28 @@ export default function AnalysisResultPage() {
             {analysis.target_role} CV Analysis
           </h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">{analysis.summary}</p>
+          {roadmapError && (
+            <div role="alert" className="mt-4 rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              {roadmapError}
+            </div>
+          )}
         </div>
-        <Card className="min-w-44 p-4 text-center">
-          <Gauge className="mx-auto size-7 text-emerald-700" />
-          <p className="mt-2 text-sm font-medium text-emerald-700">Overall Score</p>
-          <p className="text-4xl font-bold text-emerald-800">{analysis.overall_score}</p>
-        </Card>
+        <div className="flex flex-col gap-3 sm:items-end">
+          <Button
+            type="button"
+            onClick={() => void handleGenerateRoadmap()}
+            disabled={isGeneratingRoadmap}
+            className="w-full sm:w-auto"
+          >
+            <Map className="size-4" />
+            {isGeneratingRoadmap ? 'Generating roadmap...' : 'Generate Career Roadmap'}
+          </Button>
+          <Card className="min-w-44 p-4 text-center">
+            <Gauge className="mx-auto size-7 text-emerald-700" />
+            <p className="mt-2 text-sm font-medium text-emerald-700">Overall Score</p>
+            <p className="text-4xl font-bold text-emerald-800">{analysis.overall_score}</p>
+          </Card>
+        </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
