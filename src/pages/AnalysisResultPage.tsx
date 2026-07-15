@@ -95,16 +95,24 @@ export default function AnalysisResultPage() {
         if (generateError.status === 401) {
           setRoadmapError('Your session has expired. Please sign in again.');
         } else if (generateError.status === 404) {
-          setRoadmapError('The analysis could not be found.');
+          setRoadmapError('Analysis not found.');
         } else if (generateError.status === 503) {
-          setRoadmapError('The AI roadmap service is currently busy. Please try again in a moment.');
+          setRoadmapError('The AI roadmap service is currently busy.');
         } else if (generateError.status === 500) {
           setRoadmapError('Unable to generate roadmap.');
         } else {
           setRoadmapError(generateError.message || 'Unable to generate roadmap.');
         }
       } else if (generateError instanceof Error) {
-        setRoadmapError(generateError.message);
+        if (generateError.message.includes('roadmap service is currently busy')) {
+          setRoadmapError('The AI roadmap service is currently busy.');
+        } else if (generateError.message.includes('Analysis not found')) {
+          setRoadmapError('Analysis not found.');
+        } else if (generateError.message.includes('Unable to generate roadmap')) {
+          setRoadmapError('Unable to generate roadmap.');
+        } else {
+          setRoadmapError(generateError.message);
+        }
       } else {
         setRoadmapError('Unable to generate roadmap.');
       }
@@ -158,6 +166,11 @@ export default function AnalysisResultPage() {
           )}
         </div>
         <div className="flex flex-col gap-3 sm:items-end">
+          <Card className="min-w-44 p-4 text-center">
+            <Gauge className="mx-auto size-7 text-emerald-700" />
+            <p className="mt-2 text-sm font-medium text-emerald-700">Overall Score</p>
+            <p className="text-4xl font-bold text-emerald-800">{analysis.overall_score}</p>
+          </Card>
           <Button
             type="button"
             onClick={() => void handleGenerateRoadmap()}
@@ -167,11 +180,6 @@ export default function AnalysisResultPage() {
             <Map className="size-4" />
             {isGeneratingRoadmap ? 'Generating roadmap...' : 'Generate Career Roadmap'}
           </Button>
-          <Card className="min-w-44 p-4 text-center">
-            <Gauge className="mx-auto size-7 text-emerald-700" />
-            <p className="mt-2 text-sm font-medium text-emerald-700">Overall Score</p>
-            <p className="text-4xl font-bold text-emerald-800">{analysis.overall_score}</p>
-          </Card>
         </div>
       </div>
 

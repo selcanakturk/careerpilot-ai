@@ -1,5 +1,37 @@
 import { ApiError, apiRequest } from './apiService';
-import type { RoadmapGenerateResponse } from '../types/roadmap';
+import { supabase } from '../lib/supabase';
+import type {
+  CareerRoadmap,
+  RoadmapGenerateResponse,
+  RoadmapPriority,
+  RoadmapResource,
+  RoadmapStep,
+} from '../types/roadmap';
+
+type RoadmapRow = {
+  id: string;
+  user_id: string;
+  analysis_id: string;
+  target_role: string;
+  status: string;
+  duration_weeks: number;
+  summary: string;
+  estimated_job_readiness_before: number;
+  estimated_job_readiness_after: number;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+type RoadmapStepRow = {
+  week_number: number;
+  title: string;
+  description: string;
+  reason: string;
+  estimated_hours: number;
+  priority: string;
+  resources: unknown;
+  mini_project: string;
+};
 
 function createRoadmapError(error: unknown): Error {
   if (error instanceof ApiError) {
@@ -33,4 +65,103 @@ export async function generateRoadmap(analysisId: string): Promise<RoadmapGenera
   } catch (error) {
     throw createRoadmapError(error);
   }
+}
+
+function isRoadmapPriority(value: string): value is RoadmapPriority {
+  return ['low', 'medium', 'high', 'critical'].includes(value);
+}
+
+function isRoadmapResource(value: unknown): value is RoadmapResource {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  const resource = value as Partial<RoadmapResource>;
+  return typeof resource.title === 'string' && typeof resource.url === 'string';
+}
+
+function normalizeResources(value: unknown): RoadmapResource[] {
+  return Array.isArray(value) ? value.filter(isRoadmapResource) : [];
+}
+
+function mapRoadmapStep(row: RoadmapStepRow): RoadmapStep {
+  return {
+    week_number: row.week_number,
+    title: row.title,
+    description: row.description,
+    reason: row.reason,
+    estimated_hours: row.estimated_hours,
+    priority: isRoadmapPriority(row.priority) ? row.priority : 'medium',
+    resources: normalizeResources(row.resources),
+    mini_project: row.mini_project,
+  };
+}
+
+function mapRoadmapResponse(row: RoadmapRow, steps: RoadmapStep[]): RoadmapGenerateResponse {
+  const roadmap: CareerRoadmap = {
+    summary: row.summary,
+    duration_weeks: row.duration_weeks,
+    estimated_job_readiness_before: row.estimated_job_readiness_before,
+    estimated_job_readiness_after: row.estimated_job_readiness_after,
+    steps,
+  };
+
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    analysis_id: row.analysis_id,
+    target_role: row.target_role,
+    status: row.status,
+    roadmap,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+export async function getRoadmap(roadmapId: string): Promise<RoadmapGenerateResponse | null> {
+  const safeRoadmapId = roadmapId.trim();
+
+  if (!safeRoadmapId) {
+    return null;
+  }
+
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+
+  if (sessionError || !sessionData.session?.user.id) {
+    throw new Error('Your session has expired. Please sign in again.');
+  }
+
+  const userId = sessionData.session.user.id;
+  const { data: roadmapRows, error: roadmapError } = await supabase
+    .from('career_roadmaps')
+    .select(
+      'id,user_id,analysis_id,target_role,status,duration_weeks,summary,estimated_job_readiness_before,estimated_job_readiness_after,created_at,updated_at',
+    )
+    .eq('id', safeRoadmapId)
+    .eq('user_id', userId)
+    .limit(1)
+    .returns<RoadmapRow[]>();
+
+  if (roadmapError) {
+    throw new Error('Unable to load roadmap.');
+  }
+
+  const roadmap = roadmapRows?.[0];
+
+  if (!roadmap) {
+    return null;
+  }
+
+  const { data: stepRows, error: stepsError } = await supabase
+    .from('roadmap_steps')
+    .select('week_number,title,description,reason,estimated_hours,priority,resources,mini_project')
+    .eq('roadmap_id', safeRoadmapId)
+    .order('week_number', { ascending: true })
+    .returns<RoadmapStepRow[]>();
+
+  if (stepsError) {
+    throw new Error('Unable to load roadmap.');
+  }
+
+  return mapRoadmapResponse(roadmap, (stepRows ?? []).map(mapRoadmapStep));
 }
