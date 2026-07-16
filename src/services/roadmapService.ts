@@ -10,6 +10,7 @@ import type {
   RoadmapStepProgressResponse,
   RoadmapStepStatus,
   RoadmapTask,
+  RoadmapTaskProgressResponse,
   RoadmapTaskStatus,
 } from '../types/roadmap';
 
@@ -171,6 +172,17 @@ export async function updateRoadmapStepStatus(
   status: RoadmapStepStatus,
 ): Promise<RoadmapStepProgressResponse> {
   return apiRequest<RoadmapStepProgressResponse>(`/api/roadmaps/${roadmapId}/steps/${stepId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status }),
+  });
+}
+
+export async function updateRoadmapTaskStatus(
+  roadmapId: string,
+  taskId: string,
+  status: RoadmapTaskStatus,
+): Promise<RoadmapTaskProgressResponse> {
+  return apiRequest<RoadmapTaskProgressResponse>(`/api/roadmaps/${roadmapId}/tasks/${taskId}`, {
     method: 'PATCH',
     body: JSON.stringify({ status }),
   });

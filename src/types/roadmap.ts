@@ -61,3 +61,16 @@ export type RoadmapStepProgressResponse = {
   status: RoadmapStepStatus;
   updated_at: string;
 };
+
+export type RoadmapTaskProgressResponse = {
+  id: string;
+  roadmap_id: string;
+  step_id: string;
+  day_name: string;
+  task_order: number;
+  title: string;
+  estimated_minutes: number;
+  status: RoadmapTaskStatus;
+  step_status: RoadmapStepStatus;
+  updated_at: string;
+};

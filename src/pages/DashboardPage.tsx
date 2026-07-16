@@ -4,7 +4,6 @@ import CurrentRoadmapCard from '../components/dashboard/CurrentRoadmapCard';
 import DashboardHero from '../components/dashboard/DashboardHero';
 import ProgressOverview from '../components/dashboard/ProgressOverview';
 import TodaysFocusCard from '../components/dashboard/TodaysFocusCard';
-import TodaysTasksCard from '../components/dashboard/TodaysTasksCard';
 import Card from '../components/ui/Card';
 import { useAuth } from '../hooks/useAuth';
 import { ApiError } from '../services/apiService';
@@ -125,8 +124,7 @@ export default function DashboardPage() {
   return (
     <div className="space-y-7">
       <DashboardHero fullName={user?.fullName} overview={overview} />
-      <TodaysFocusCard overview={overview} />
-      <TodaysTasksCard
+      <TodaysFocusCard
         errorMessage={startWeekError}
         isStartingWeek={isStartingWeek}
         onStartWeek={(step) => void handleStartWeek(step)}

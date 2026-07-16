@@ -76,9 +76,26 @@ class UpdateRoadmapStepRequest(BaseModel):
     status: RoadmapStepStatus
 
 
+class UpdateRoadmapTaskRequest(BaseModel):
+    status: RoadmapTaskStatus
+
+
 class RoadmapStepProgressResponse(BaseModel):
     id: UUID
     roadmap_id: UUID
     week_number: int
     status: RoadmapStepStatus
+    updated_at: datetime
+
+
+class RoadmapTaskProgressResponse(BaseModel):
+    id: UUID
+    roadmap_id: UUID
+    step_id: UUID
+    day_name: RoadmapDayName
+    task_order: int
+    title: str
+    estimated_minutes: int
+    status: RoadmapTaskStatus
+    step_status: RoadmapStepStatus
     updated_at: datetime

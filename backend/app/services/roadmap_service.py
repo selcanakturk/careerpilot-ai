@@ -625,6 +625,111 @@ def update_step_status(
     return updated_step
 
 
+def update_task_status(
+    roadmap_id: str,
+    task_id: str,
+    status: str,
+) -> dict[str, object] | None:
+    try:
+        task_response = (
+            get_supabase_client()
+            .table(ROADMAP_TASKS_TABLE)
+            .select("id,roadmap_id,step_id")
+            .eq("id", task_id)
+            .eq("roadmap_id", roadmap_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.exception("Unable to load roadmap task before status update.")
+        raise RuntimeError("Unable to load roadmap task.") from exc
+
+    task = _extract_response_data(task_response, "select roadmap task")
+
+    if task is None:
+        return None
+
+    if not isinstance(task, dict):
+        raise RuntimeError("Unexpected roadmap task database response.")
+
+    step_id = str(task["step_id"])
+
+    try:
+        update_response = (
+            get_supabase_client()
+            .table(ROADMAP_TASKS_TABLE)
+            .update({"status": status, "updated_at": datetime.now(UTC).isoformat()})
+            .eq("id", task_id)
+            .eq("roadmap_id", roadmap_id)
+            .execute()
+        )
+    except Exception as exc:
+        logger.exception("Unable to update roadmap task status.")
+        raise RuntimeError("Unable to update roadmap task status.") from exc
+
+    updated_task = _extract_response_data(update_response, "update roadmap task status")
+
+    if updated_task is None:
+        raise RuntimeError("Unable to update roadmap task status.")
+
+    if not isinstance(updated_task, dict):
+        raise RuntimeError("Unexpected roadmap task database response.")
+
+    step_status = _sync_step_status_from_tasks(
+        roadmap_id=roadmap_id,
+        step_id=step_id,
+    )
+    updated_task["step_status"] = step_status
+
+    return updated_task
+
+
+def _sync_step_status_from_tasks(roadmap_id: str, step_id: str) -> str:
+    try:
+        tasks_response = (
+            get_supabase_client()
+            .table(ROADMAP_TASKS_TABLE)
+            .select("id,status")
+            .eq("roadmap_id", roadmap_id)
+            .eq("step_id", step_id)
+            .execute()
+        )
+    except Exception as exc:
+        logger.exception("Unable to load roadmap tasks before step status sync.")
+        raise RuntimeError("Unable to sync roadmap step status.") from exc
+
+    tasks = _extract_rows(tasks_response, "select roadmap tasks for step sync")
+
+    completed_count = sum(1 for task in tasks if task.get("status") == "completed")
+
+    if tasks and completed_count == len(tasks):
+        next_step_status = "completed"
+    elif completed_count > 0:
+        next_step_status = "in_progress"
+    else:
+        next_step_status = "not_started"
+
+    try:
+        step_response = (
+            get_supabase_client()
+            .table(ROADMAP_STEPS_TABLE)
+            .update({"status": next_step_status, "updated_at": datetime.now(UTC).isoformat()})
+            .eq("id", step_id)
+            .eq("roadmap_id", roadmap_id)
+            .execute()
+        )
+    except Exception as exc:
+        logger.exception("Unable to update roadmap step status after task update.")
+        raise RuntimeError("Unable to sync roadmap step status.") from exc
+
+    updated_step = _extract_response_data(step_response, "sync roadmap step status")
+
+    if updated_step is None:
+        raise RuntimeError("Unable to sync roadmap step status.")
+
+    return next_step_status
+
+
 def save_roadmap(
     user_id: str,
     analysis: dict[str, object],

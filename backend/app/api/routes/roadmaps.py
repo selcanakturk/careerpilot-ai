@@ -7,6 +7,8 @@ from app.core.security import CurrentUser, get_current_user
 from app.schemas.roadmap import (
     RoadmapGenerateResponse,
     RoadmapStepProgressResponse,
+    RoadmapTaskProgressResponse,
+    UpdateRoadmapTaskRequest,
     UpdateRoadmapStepRequest,
 )
 from app.services import roadmap_service
@@ -131,3 +133,53 @@ def update_roadmap_step_status(
         )
 
     return RoadmapStepProgressResponse.model_validate(updated_step)
+
+
+@router.patch(
+    "/{roadmap_id}/tasks/{task_id}",
+    response_model=RoadmapTaskProgressResponse,
+)
+def update_roadmap_task_status(
+    roadmap_id: UUID,
+    task_id: UUID,
+    payload: UpdateRoadmapTaskRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+) -> RoadmapTaskProgressResponse:
+    try:
+        roadmap = roadmap_service.get_owned_roadmap(
+            roadmap_id=str(roadmap_id),
+            user_id=current_user.id,
+        )
+    except Exception:
+        logger.exception("Unable to verify roadmap ownership before task update.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to update roadmap task.",
+        )
+
+    if roadmap is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Roadmap not found.",
+        )
+
+    try:
+        updated_task = roadmap_service.update_task_status(
+            roadmap_id=str(roadmap_id),
+            task_id=str(task_id),
+            status=payload.status,
+        )
+    except Exception:
+        logger.exception("Unable to update roadmap task status.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to update roadmap task.",
+        )
+
+    if updated_task is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Roadmap task not found.",
+        )
+
+    return RoadmapTaskProgressResponse.model_validate(updated_task)

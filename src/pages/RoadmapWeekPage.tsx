@@ -5,8 +5,15 @@ import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
 import DailyPlan from '../components/roadmap/DailyPlan';
 import ResourceList from '../components/roadmap/ResourceList';
-import { getRoadmap } from '../services/roadmapService';
-import type { RoadmapGenerateResponse, RoadmapPriority, RoadmapStep, RoadmapStepStatus } from '../types/roadmap';
+import { ApiError } from '../services/apiService';
+import { getRoadmap, updateRoadmapTaskStatus } from '../services/roadmapService';
+import type {
+  RoadmapGenerateResponse,
+  RoadmapPriority,
+  RoadmapStep,
+  RoadmapStepStatus,
+  RoadmapTask,
+} from '../types/roadmap';
 
 const priorityClasses: Record<RoadmapPriority, string> = {
   critical: 'bg-rose-50 text-rose-700 ring-rose-100',
@@ -41,7 +48,9 @@ export default function RoadmapWeekPage() {
   const [roadmap, setRoadmap] = useState<RoadmapGenerateResponse | null>(null);
   const [step, setStep] = useState<RoadmapStep | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [updatingTaskId, setUpdatingTaskId] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const [taskError, setTaskError] = useState('');
 
   useEffect(() => {
     let isMounted = true;
@@ -133,6 +142,57 @@ export default function RoadmapWeekPage() {
 
   const progress = getTaskProgress(step);
 
+  const handleToggleTask = async (task: RoadmapTask) => {
+    if (updatingTaskId) {
+      return;
+    }
+
+    const nextStatus = task.status === 'completed' ? 'not_started' : 'completed';
+    setTaskError('');
+    setUpdatingTaskId(task.id);
+
+    try {
+      const updatedTask = await updateRoadmapTaskStatus(roadmap.id, task.id, nextStatus);
+
+      setStep((currentStep) => {
+        if (!currentStep) {
+          return currentStep;
+        }
+
+        return {
+          ...currentStep,
+          status: updatedTask.step_status,
+          days: currentStep.days.map((day) => ({
+            ...day,
+            tasks: day.tasks.map((dayTask) =>
+              dayTask.id === updatedTask.id
+                ? {
+                    ...dayTask,
+                    status: updatedTask.status,
+                    updated_at: updatedTask.updated_at,
+                  }
+                : dayTask,
+            ),
+          })),
+        };
+      });
+    } catch (updateError) {
+      if (updateError instanceof ApiError) {
+        if (updateError.status === 401) {
+          setTaskError('Your session has expired. Please sign in again.');
+        } else if (updateError.status === 404) {
+          setTaskError('This roadmap task could not be found.');
+        } else {
+          setTaskError('We could not update this task. Please try again.');
+        }
+      } else {
+        setTaskError('We could not update this task. Please try again.');
+      }
+    } finally {
+      setUpdatingTaskId(null);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <Link to={`/roadmaps/${roadmap.id}`} className="inline-flex">
@@ -219,7 +279,16 @@ export default function RoadmapWeekPage() {
         </Card>
       </div>
 
-      <DailyPlan days={step.days} />
+      {taskError && (
+        <div role="alert" className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          {taskError}
+        </div>
+      )}
+      <DailyPlan
+        days={step.days}
+        onToggleTask={(task) => void handleToggleTask(task)}
+        updatingTaskId={updatingTaskId}
+      />
     </div>
   );
 }

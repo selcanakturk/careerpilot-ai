@@ -1,8 +1,10 @@
-import type { RoadmapDay } from '../../types/roadmap';
+import type { RoadmapDay, RoadmapTask } from '../../types/roadmap';
 import RoadmapTaskItem from './RoadmapTaskItem';
 
 type DayPlanCardProps = {
   day: RoadmapDay;
+  onToggleTask?: (task: RoadmapTask) => void;
+  updatingTaskId?: string | null;
 };
 
 function formatDuration(minutes: number) {
@@ -20,7 +22,7 @@ function formatDuration(minutes: number) {
   return `${hours}h ${remainingMinutes}m`;
 }
 
-export default function DayPlanCard({ day }: DayPlanCardProps) {
+export default function DayPlanCard({ day, onToggleTask, updatingTaskId }: DayPlanCardProps) {
   const totalMinutes = day.tasks.reduce((sum, task) => sum + task.estimated_minutes, 0);
   const sortedTasks = [...day.tasks].sort((firstTask, secondTask) => {
     const firstOrder = firstTask.task_order ?? 0;
@@ -40,7 +42,12 @@ export default function DayPlanCard({ day }: DayPlanCardProps) {
       {sortedTasks.length > 0 ? (
         <ul className="mt-3 space-y-2">
           {sortedTasks.map((task) => (
-            <RoadmapTaskItem key={task.id} task={task} />
+            <RoadmapTaskItem
+              key={task.id}
+              isUpdating={updatingTaskId === task.id}
+              onToggle={onToggleTask}
+              task={task}
+            />
           ))}
         </ul>
       ) : (

@@ -1,13 +1,15 @@
-import type { RoadmapDay } from '../../types/roadmap';
+import type { RoadmapDay, RoadmapTask } from '../../types/roadmap';
 import DayPlanCard from './DayPlanCard';
 
 type DailyPlanProps = {
   days: RoadmapDay[];
+  onToggleTask?: (task: RoadmapTask) => void;
+  updatingTaskId?: string | null;
 };
 
 const dayOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
-export default function DailyPlan({ days }: DailyPlanProps) {
+export default function DailyPlan({ days, onToggleTask, updatingTaskId }: DailyPlanProps) {
   const sortedDays = dayOrder.map(
     (dayName) => days.find((day) => day.day_name === dayName) ?? { day_name: dayName, tasks: [] },
   );
@@ -22,7 +24,12 @@ export default function DailyPlan({ days }: DailyPlanProps) {
       </div>
       <div className="mt-4 grid gap-3">
         {sortedDays.map((day) => (
-          <DayPlanCard key={day.day_name} day={day} />
+          <DayPlanCard
+            key={day.day_name}
+            day={day}
+            onToggleTask={onToggleTask}
+            updatingTaskId={updatingTaskId}
+          />
         ))}
       </div>
     </section>
