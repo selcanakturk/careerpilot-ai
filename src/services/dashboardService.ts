@@ -22,6 +22,7 @@ type RoadmapRow = {
   estimated_job_readiness_before: number;
   estimated_job_readiness_after: number;
   created_at: string;
+  updated_at: string | null;
 };
 
 type RoadmapStepRow = {
@@ -30,6 +31,7 @@ type RoadmapStepRow = {
   title: string;
   estimated_hours: number;
   status: string | null;
+  updated_at: string | null;
 };
 
 type RoadmapTaskRow = {
@@ -40,6 +42,8 @@ type RoadmapTaskRow = {
   estimated_minutes: number;
   status: string | null;
   task_order: number;
+  created_at: string;
+  updated_at: string | null;
 };
 
 function isRoadmapStepStatus(value: string | null): value is RoadmapStepStatus {
@@ -67,6 +71,7 @@ function mapRoadmap(row: RoadmapRow): DashboardRoadmap {
     readinessBefore: row.estimated_job_readiness_before,
     readinessAfter: row.estimated_job_readiness_after,
     createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 
@@ -77,6 +82,7 @@ function mapStep(row: RoadmapStepRow): DashboardRoadmapStep {
     title: row.title,
     estimatedHours: row.estimated_hours,
     status: isRoadmapStepStatus(row.status) ? row.status : 'not_started',
+    updatedAt: row.updated_at,
   };
 }
 
@@ -89,6 +95,8 @@ function mapTask(row: RoadmapTaskRow): DashboardRoadmapTask {
     estimatedMinutes: row.estimated_minutes,
     status: isRoadmapTaskStatus(row.status) ? row.status : 'not_started',
     taskOrder: row.task_order,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 
@@ -112,7 +120,7 @@ export async function getDashboardOverview(): Promise<DashboardOverview> {
       .returns<AnalysisRow[]>(),
     supabase
       .from('career_roadmaps')
-      .select('id,target_role,duration_weeks,estimated_job_readiness_before,estimated_job_readiness_after,created_at')
+      .select('id,target_role,duration_weeks,estimated_job_readiness_before,estimated_job_readiness_after,created_at,updated_at')
       .eq('user_id', userId)
       .eq('status', 'active')
       .order('created_at', { ascending: false })
@@ -139,13 +147,13 @@ export async function getDashboardOverview(): Promise<DashboardOverview> {
   const [stepsResult, tasksResult] = await Promise.all([
     supabase
       .from('roadmap_steps')
-      .select('id,week_number,title,estimated_hours,status')
+      .select('id,week_number,title,estimated_hours,status,updated_at')
       .eq('roadmap_id', activeRoadmap.id)
       .order('week_number', { ascending: true })
       .returns<RoadmapStepRow[]>(),
     supabase
       .from('roadmap_tasks')
-      .select('id,step_id,day_name,title,estimated_minutes,status,task_order')
+      .select('id,step_id,day_name,title,estimated_minutes,status,task_order,created_at,updated_at')
       .eq('roadmap_id', activeRoadmap.id)
       .returns<RoadmapTaskRow[]>(),
   ]);

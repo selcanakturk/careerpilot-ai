@@ -13,7 +13,9 @@ export default function DashboardEmptyState({ analysisId }: DashboardEmptyStateP
       <UploadCloud className="mx-auto size-10 text-brand-700" />
       <h2 className="mt-4 text-2xl font-bold tracking-tight text-slate-950">No roadmap yet</h2>
       <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-slate-600">
-        Generate a roadmap from your latest CV analysis.
+        {analysisId
+          ? 'Generate your AI Career Roadmap to start tracking your career progress.'
+          : 'Upload your CV and generate an analysis to start tracking your career progress.'}
       </p>
       <div className="mt-6 inline-flex">
         {analysisId ? (

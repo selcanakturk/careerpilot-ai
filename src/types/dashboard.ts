@@ -14,6 +14,7 @@ export type DashboardRoadmap = {
   readinessBefore: number;
   readinessAfter: number;
   createdAt: string;
+  updatedAt: string | null;
 };
 
 export type DashboardRoadmapStep = {
@@ -22,6 +23,7 @@ export type DashboardRoadmapStep = {
   title: string;
   estimatedHours: number;
   status: RoadmapStepStatus;
+  updatedAt: string | null;
 };
 
 export type DashboardRoadmapTask = {
@@ -32,6 +34,8 @@ export type DashboardRoadmapTask = {
   estimatedMinutes: number;
   status: RoadmapTaskStatus;
   taskOrder: number;
+  createdAt: string;
+  updatedAt: string | null;
 };
 
 export type DashboardOverview = {

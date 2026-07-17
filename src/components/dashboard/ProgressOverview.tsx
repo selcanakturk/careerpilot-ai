@@ -1,27 +1,21 @@
-import { CheckCircle2, Gauge, ListChecks, TrendingUp } from 'lucide-react';
+import { CalendarDays, CheckCircle2, Gauge, ListChecks, TimerReset, TrendingUp } from 'lucide-react';
 import type { DashboardOverview } from '../../types/dashboard';
+import { getCurrentDashboardStep, getDashboardTaskStats } from '../../utils/dashboardOverview';
 import ProgressMetricCard from './ProgressMetricCard';
 
 type ProgressOverviewProps = {
   overview: DashboardOverview;
 };
 
-function getRoadmapProgress(overview: DashboardOverview) {
-  const totalSteps = overview.roadmapSteps.length;
-  const completedSteps = overview.roadmapSteps.filter((step) => step.status === 'completed').length;
-  const percentage = totalSteps > 0 ? Math.round((completedSteps / totalSteps) * 100) : 0;
-
-  return { completedSteps, percentage, totalSteps };
-}
-
 export default function ProgressOverview({ overview }: ProgressOverviewProps) {
-  const progress = getRoadmapProgress(overview);
-  const completedTasks = overview.roadmapTasks.filter((task) => task.status === 'completed').length;
+  const taskStats = getDashboardTaskStats(overview);
+  const currentStep = getCurrentDashboardStep(overview.roadmapSteps);
+  const hasRoadmap = Boolean(overview.activeRoadmap);
 
   return (
     <section>
       <h2 className="mb-4 text-xl font-bold tracking-tight text-slate-950">Progress Overview</h2>
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <ProgressMetricCard
           icon={Gauge}
           label="CV Score"
@@ -31,21 +25,33 @@ export default function ProgressOverview({ overview }: ProgressOverviewProps) {
           icon={TrendingUp}
           label="Job Readiness"
           value={
-            overview.activeRoadmap
+            hasRoadmap && overview.activeRoadmap
               ? `${overview.activeRoadmap.readinessBefore} → ${overview.activeRoadmap.readinessAfter}`
               : '—'
           }
+          helper={hasRoadmap ? 'Before → after roadmap estimate' : 'Generate a roadmap to track readiness'}
         />
         <ProgressMetricCard
-          helper={`${progress.completedSteps} / ${progress.totalSteps} weeks completed`}
+          helper={hasRoadmap ? `${currentStep?.title ?? 'No active week'}` : 'No active roadmap yet'}
+          icon={CalendarDays}
+          label="Current Week"
+          value={hasRoadmap && currentStep ? `Week ${currentStep.weekNumber}` : '—'}
+        />
+        <ProgressMetricCard
+          helper={`${taskStats.completedTasks} / ${taskStats.totalTasks} tasks completed`}
           icon={ListChecks}
           label="Roadmap Progress"
-          value={overview.activeRoadmap ? `${progress.percentage}%` : '—'}
+          value={hasRoadmap ? `${taskStats.progressPercent}%` : '—'}
         />
         <ProgressMetricCard
           icon={CheckCircle2}
           label="Completed Tasks"
-          value={completedTasks.toString()}
+          value={hasRoadmap ? taskStats.completedTasks.toString() : '—'}
+        />
+        <ProgressMetricCard
+          icon={TimerReset}
+          label="Remaining Tasks"
+          value={hasRoadmap ? taskStats.remainingTasks.toString() : '—'}
         />
       </div>
     </section>

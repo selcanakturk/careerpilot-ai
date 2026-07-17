@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Gauge } from 'lucide-react';
 import CurrentRoadmapCard from '../components/dashboard/CurrentRoadmapCard';
+import DashboardNextMilestone from '../components/dashboard/DashboardNextMilestone';
+import DashboardRecentActivity from '../components/dashboard/DashboardRecentActivity';
 import DashboardHero from '../components/dashboard/DashboardHero';
 import ProgressOverview from '../components/dashboard/ProgressOverview';
 import TodaysFocusCard from '../components/dashboard/TodaysFocusCard';
@@ -99,6 +101,7 @@ export default function DashboardPage() {
               ? {
                   ...roadmapStep,
                   status: updatedStep.status,
+                  updatedAt: updatedStep.updated_at,
                 }
               : roadmapStep,
           ),
@@ -131,7 +134,9 @@ export default function DashboardPage() {
         overview={overview}
       />
       <ProgressOverview overview={overview} />
+      <DashboardNextMilestone overview={overview} />
       <CurrentRoadmapCard overview={overview} />
+      <DashboardRecentActivity overview={overview} />
     </div>
   );
 }
