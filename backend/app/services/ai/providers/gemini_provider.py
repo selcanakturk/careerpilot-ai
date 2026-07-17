@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from app.core.config import get_settings
 from app.schemas.analysis import CVAnalysisResult
+from app.schemas.job import JobMatchAIResult
 
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,20 @@ Do not infer or evaluate discriminatory or sensitive personal attributes.
 Keep the result concise, clear, and actionable.
 Ensure overall_score is between 0 and 100.
 Ensure list fields are arrays and never null.
+""".strip()
+
+JOB_MATCH_SYSTEM_INSTRUCTIONS = """
+Act as an experienced technical recruiter and career coach.
+Evaluate the fit between the provided completed CV analysis and the job posting.
+Base the result only on the provided CV analysis and job posting.
+Do not invent skills, achievements, experience, employers, education, or certifications.
+Extract real requirements from the job posting and compare them to the CV analysis.
+matched_skills must include only skills supported by both the CV analysis and the job posting.
+missing_skills must include only job requirements not supported by the CV analysis.
+Do not infer or evaluate discriminatory or sensitive personal attributes.
+Keep the result concise, realistic, and actionable.
+application_readiness must be low, medium, or high.
+Return only valid JSON matching the requested schema.
 """.strip()
 
 
@@ -64,6 +79,57 @@ def _build_prompt(cv_text: str, target_role: str, experience_level: str) -> str:
             cv_text,
         ]
     )
+
+
+def _build_job_match_prompt(analysis: dict[str, object], job_posting: dict[str, object]) -> str:
+    return "\n\n".join(
+        [
+            JOB_MATCH_SYSTEM_INSTRUCTIONS,
+            "Completed CV analysis:",
+            f"Target role: {analysis.get('target_role', '')}",
+            f"Overall score: {analysis.get('overall_score', '')}",
+            f"Summary: {analysis.get('summary', '')}",
+            f"Strengths: {analysis.get('strengths', [])}",
+            f"Weaknesses: {analysis.get('weaknesses', [])}",
+            f"Skill gaps: {analysis.get('skill_gaps', [])}",
+            f"CV suggestions: {analysis.get('cv_suggestions', [])}",
+            "Job posting:",
+            f"Title: {job_posting.get('title', '')}",
+            f"Company: {job_posting.get('company_name', '')}",
+            f"Location: {job_posting.get('location', '')}",
+            f"Employment type: {job_posting.get('employment_type', '')}",
+            f"Work mode: {job_posting.get('work_mode', '')}",
+            f"Description: {job_posting.get('description', '')}",
+        ]
+    )
+
+
+def build_gemini_job_match_schema() -> dict[str, object]:
+    string_array_schema = {"type": "array", "items": {"type": "string"}}
+
+    return {
+        "type": "object",
+        "properties": {
+            "match_score": {"type": "integer", "minimum": 0, "maximum": 100},
+            "summary": {"type": "string"},
+            "matched_skills": string_array_schema,
+            "missing_skills": string_array_schema,
+            "strengths": string_array_schema,
+            "risks": string_array_schema,
+            "recommendations": string_array_schema,
+            "application_readiness": {"type": "string", "enum": ["low", "medium", "high"]},
+        },
+        "required": [
+            "match_score",
+            "summary",
+            "matched_skills",
+            "missing_skills",
+            "strengths",
+            "risks",
+            "recommendations",
+            "application_readiness",
+        ],
+    }
 
 
 def _extract_response_text(response: object) -> str:
@@ -183,6 +249,38 @@ class GeminiProvider:
 
         raise RuntimeError("The AI analysis service is temporarily rate limited or unavailable.")
 
+    def analyze_job_match(
+        self,
+        analysis: dict[str, object],
+        job_posting: dict[str, object],
+    ) -> JobMatchAIResult:
+        prompt = _build_job_match_prompt(analysis, job_posting)
+        settings = get_settings()
+
+        for model_index, model_name in enumerate(_get_model_sequence(settings.gemini_model)):
+            max_attempts = PRIMARY_TEMPORARY_ATTEMPTS if model_index == 0 else FALLBACK_TEMPORARY_ATTEMPTS
+
+            try:
+                return self._generate_job_match_with_retry(
+                    model_name=model_name,
+                    prompt=prompt,
+                    max_attempts=max_attempts,
+                )
+            except DailyQuotaExceededError:
+                logger.warning(
+                    "Gemini job match model quota exhausted; trying next model.",
+                    extra={"model": model_name},
+                )
+                continue
+            except TemporaryAIServiceError:
+                logger.warning(
+                    "Gemini job match model unavailable; trying next model.",
+                    extra={"model": model_name},
+                )
+                continue
+
+        raise TemporaryAIServiceError("The AI job matching service is temporarily rate limited or unavailable.")
+
     def _generate_with_model(self, model_name: str, prompt: str) -> CVAnalysisResult:
         logger.info("Attempting Gemini CV analysis model.", extra={"model": model_name})
 
@@ -238,6 +336,62 @@ class GeminiProvider:
                 _sleep_before_retry(attempt)
 
         raise TemporaryAIServiceError("The AI analysis service is temporarily unavailable.")
+
+    def _generate_job_match_with_model(self, model_name: str, prompt: str) -> JobMatchAIResult:
+        logger.info("Attempting Gemini job match model.", extra={"model": model_name})
+
+        response = self._client.models.generate_content(
+            model=model_name,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_json_schema=build_gemini_job_match_schema(),
+            ),
+        )
+
+        try:
+            return JobMatchAIResult.model_validate_json(_extract_response_text(response))
+        except ValidationError as exc:
+            logger.exception("Gemini returned an invalid structured job match response.")
+            raise PermanentAIServiceError("The AI job match response could not be validated.") from exc
+        except RuntimeError as exc:
+            raise PermanentAIServiceError(str(exc)) from exc
+
+    def _generate_job_match_with_retry(
+        self,
+        model_name: str,
+        prompt: str,
+        max_attempts: int,
+    ) -> JobMatchAIResult:
+        for attempt in range(max_attempts):
+            try:
+                return self._generate_job_match_with_model(model_name, prompt)
+            except PermanentAIServiceError as exc:
+                raise RuntimeError(str(exc)) from exc
+            except Exception as exc:
+                if _is_auth_error(exc):
+                    logger.exception("Gemini job match authentication failed.", extra={"model": model_name})
+                    raise RuntimeError("Unable to authenticate with the AI job matching service.") from exc
+
+                if _is_daily_quota_error(exc):
+                    raise DailyQuotaExceededError("The AI job match model daily quota is exhausted.") from exc
+
+                if not _is_temporary_ai_error(exc):
+                    logger.exception("Gemini job match request failed.", extra={"model": model_name})
+                    raise RuntimeError("Unable to complete AI job matching right now.") from exc
+
+                if attempt == max_attempts - 1:
+                    raise TemporaryAIServiceError(
+                        "The AI job matching service is temporarily unavailable."
+                    ) from exc
+
+                logger.warning(
+                    "Temporary Gemini job match error; retrying request.",
+                    extra={"attempt": attempt + 1, "max_attempts": max_attempts, "model": model_name},
+                )
+                _sleep_before_retry(attempt)
+
+        raise TemporaryAIServiceError("The AI job matching service is temporarily unavailable.")
 
 
 def _get_model_sequence(primary_model: str) -> list[str]:

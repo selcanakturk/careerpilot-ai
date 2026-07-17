@@ -3,6 +3,7 @@ import {
   History,
   LayoutDashboard,
   LogOut,
+  BriefcaseBusiness,
   User,
   X,
 } from 'lucide-react';
@@ -17,6 +18,7 @@ type SidebarProps = {
 const navItems = [
   { label: 'Dashboard', to: '/dashboard', icon: LayoutDashboard },
   { label: 'Upload CV', to: '/upload-cv', icon: FileUp },
+  { label: 'Jobs', to: '/jobs', icon: BriefcaseBusiness },
   { label: 'History', to: '/history', icon: History },
   { label: 'Profile', to: '/profile', icon: User },
 ];

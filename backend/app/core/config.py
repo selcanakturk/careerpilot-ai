@@ -15,6 +15,13 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
     gemini_fallback_model: str = "gemini-3.1-flash-lite"
+    adzuna_app_id: str = ""
+    adzuna_app_key: str = ""
+    adzuna_country: str = "gb"
+    jsearch_api_key: str = ""
+    jsearch_api_host: str = "jsearch.p.rapidapi.com"
+    jooble_api_key: str = ""
+    job_discovery_provider: str = "auto"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

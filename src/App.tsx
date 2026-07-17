@@ -4,6 +4,8 @@ import AppLayout from './layouts/AppLayout';
 import AnalysisResultPage from './pages/AnalysisResultPage';
 import DashboardPage from './pages/DashboardPage';
 import HistoryPage from './pages/HistoryPage';
+import JobDetailPage from './pages/JobDetailPage';
+import JobsPage from './pages/JobsPage';
 import LandingPage from './pages/LandingPage';
 import LoginPage from './pages/LoginPage';
 import ProfilePage from './pages/ProfilePage';
@@ -25,6 +27,8 @@ export default function App() {
           <Route path="/analysis/:analysisId" element={<AnalysisResultPage />} />
           <Route path="/roadmaps/:roadmapId" element={<RoadmapPage />} />
           <Route path="/roadmaps/:roadmapId/weeks/:stepId" element={<RoadmapWeekPage />} />
+          <Route path="/jobs" element={<JobsPage />} />
+          <Route path="/jobs/:jobPostingId" element={<JobDetailPage />} />
           <Route path="/history" element={<HistoryPage />} />
           <Route path="/profile" element={<ProfilePage />} />
         </Route>
