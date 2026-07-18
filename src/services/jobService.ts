@@ -85,7 +85,29 @@ export async function discoverJobs({
   }
 
   try {
-    return await apiRequest<JobSearchResponse>(`/api/jobs/discover?${params.toString()}`);
+    if (import.meta.env.DEV) {
+      console.info('Job discovery request', {
+        hasQuery: Boolean(query?.trim()),
+        hasLocation: Boolean(location?.trim()),
+        page,
+        resultsPerPage,
+      });
+    }
+
+    const response = await apiRequest<JobSearchResponse>(`/api/jobs/discover?${params.toString()}`);
+
+    if (import.meta.env.DEV) {
+      console.info('Job discovery response', {
+        jobs: response.jobs.length,
+        providersUsed: response.providers_used,
+        providersFailed: response.providers_failed,
+        profileUsed: response.profile_used,
+        resolvedQuery: response.resolved_query ?? response.query,
+        resolvedLocation: response.resolved_location ?? response.location,
+      });
+    }
+
+    return response;
   } catch (error) {
     if (error instanceof ApiError) {
       if (

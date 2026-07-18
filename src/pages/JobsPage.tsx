@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import { BriefcaseBusiness, ExternalLink, Plus, Search } from 'lucide-react';
+import { BrainCircuit, BriefcaseBusiness, ExternalLink, Plus, Search } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
@@ -11,6 +11,7 @@ import type {
   CreateJobPostingInput,
   EmploymentType,
   ExternalJobPosting,
+  JobSearchCareerProfile,
   JobPosting,
   WorkMode,
 } from '../types/job';
@@ -41,6 +42,14 @@ const initialForm: CreateJobPostingInput = {
   description: '',
 };
 
+type RecommendationContext = {
+  profileUsed: boolean;
+  analysisId: string | null;
+  resolvedQuery: string | null;
+  resolvedLocation: string | null;
+  careerProfile: JobSearchCareerProfile | null;
+};
+
 function formatDate(value: string | null) {
   if (!value) {
     return 'Date not available';
@@ -55,6 +64,22 @@ function formatDate(value: string | null) {
 
 function formatOption(value: string | null) {
   return value ? value.replace(/_/g, ' ') : 'Not specified';
+}
+
+function formatExperienceLevel(value: string | null) {
+  if (!value) {
+    return 'Not specified';
+  }
+
+  const normalizedValue = value.trim().toLowerCase();
+  const labels: Record<string, string> = {
+    junior: 'Junior',
+    mid: 'Mid-level',
+    'mid-level': 'Mid-level',
+    senior: 'Senior',
+  };
+
+  return labels[normalizedValue] ?? value.replace(/_/g, ' ');
 }
 
 function formatSalary(job: ExternalJobPosting) {
@@ -105,6 +130,13 @@ export default function JobsPage() {
   const [searchLocation, setSearchLocation] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [totalResults, setTotalResults] = useState<number | null>(null);
+  const [recommendationContext, setRecommendationContext] = useState<RecommendationContext>({
+    profileUsed: false,
+    analysisId: null,
+    resolvedQuery: null,
+    resolvedLocation: null,
+    careerProfile: null,
+  });
 
   const runDiscovery = async (page: number, query = searchQuery, location = searchLocation) => {
     setIsDiscovering(true);
@@ -120,8 +152,22 @@ export default function JobsPage() {
       setRecommendedJobs(result.jobs);
       setCurrentPage(result.page);
       setTotalResults(result.total_results);
+      setRecommendationContext({
+        profileUsed: result.profile_used === true,
+        analysisId: result.analysis_id ?? null,
+        resolvedQuery: result.resolved_query ?? result.query,
+        resolvedLocation: result.resolved_location ?? result.location,
+        careerProfile: result.career_profile ?? null,
+      });
     } catch (discoverError) {
       setRecommendedJobs([]);
+      setRecommendationContext({
+        profileUsed: false,
+        analysisId: null,
+        resolvedQuery: null,
+        resolvedLocation: null,
+        careerProfile: null,
+      });
       setDiscoveryError(
         discoverError instanceof Error
           ? discoverError.message
@@ -219,6 +265,9 @@ export default function JobsPage() {
   const canGoNext = totalResults !== null
     ? currentPage * RESULTS_PER_PAGE < totalResults
     : recommendedJobs.length === RESULTS_PER_PAGE;
+  const careerProfile = recommendationContext.careerProfile;
+  const topSkills = careerProfile?.skills.slice(0, 5) ?? [];
+  const showCareerProfile = recommendationContext.profileUsed && careerProfile !== null;
 
   return (
     <div className="space-y-7">
@@ -227,15 +276,86 @@ export default function JobsPage() {
           <p className="text-sm font-semibold text-brand-700">Job Center</p>
           <h1 className="mt-1 text-3xl font-bold tracking-tight text-slate-950">Jobs For You</h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-            Discover current opportunities in Türkiye based on your CV, target role, and career roadmap.
+            Personalized opportunities based on your latest CV analysis, with manual search controls when you
+            want to refine the results.
           </p>
         </div>
       </section>
 
+      {showCareerProfile && (
+        <Card className="p-6">
+          <div className="flex flex-col gap-6">
+            <div className="flex items-start gap-3">
+              <div className="flex size-11 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-700 ring-1 ring-brand-100">
+                <BrainCircuit className="size-5" aria-hidden="true" />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-brand-700">Your Career Profile</p>
+                <h2 className="mt-1 text-xl font-bold tracking-tight text-slate-950">
+                  Built from your latest CV analysis
+                </h2>
+              </div>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="rounded-md border border-slate-100 bg-slate-50 px-4 py-3">
+                <p className="text-xs font-bold uppercase text-slate-400">Primary Role</p>
+                <p className="mt-1 text-sm font-semibold text-slate-900">
+                  {careerProfile.primary_role}
+                </p>
+              </div>
+              <div className="rounded-md border border-slate-100 bg-slate-50 px-4 py-3">
+                <p className="text-xs font-bold uppercase text-slate-400">Experience Level</p>
+                <p className="mt-1 text-sm font-semibold text-slate-900">
+                  {formatExperienceLevel(careerProfile.experience_level)}
+                </p>
+              </div>
+              {careerProfile.overall_score !== null && (
+                <div className="rounded-md border border-slate-100 bg-slate-50 px-4 py-3">
+                  <p className="text-xs font-bold uppercase text-slate-400">Overall CV Score</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">{careerProfile.overall_score}%</p>
+                </div>
+              )}
+              <div className="rounded-md border border-slate-100 bg-slate-50 px-4 py-3">
+                <p className="text-xs font-bold uppercase text-slate-400">Location</p>
+                <p className="mt-1 text-sm font-semibold text-slate-900">
+                  {recommendationContext.resolvedLocation ?? 'Not specified'}
+                </p>
+              </div>
+            </div>
+            <div className="rounded-md border border-slate-100 bg-slate-50 px-4 py-3">
+              <p className="text-xs font-bold uppercase text-slate-400">Top Skills</p>
+              {topSkills.length > 0 ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {topSkills.map((skill) => (
+                    <span
+                      key={skill}
+                      className="rounded-md bg-white px-2.5 py-1 text-xs font-bold text-slate-700 ring-1 ring-slate-200"
+                    >
+                      {skill}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-2 text-sm text-slate-600">
+                  Skills will appear after a more detailed CV analysis.
+                </p>
+              )}
+            </div>
+          </div>
+        </Card>
+      )}
+
       <Card className="p-6">
+        <div className="mb-5">
+          <p className="text-sm font-bold text-brand-700">Refine Search</p>
+          <h2 className="mt-1 text-xl font-bold tracking-tight text-slate-950">Adjust role or location</h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Override your AI recommendations with a specific role or location when needed.
+          </p>
+        </div>
         <form className="grid gap-4 lg:grid-cols-[1fr_1fr_auto]" onSubmit={handleSearch}>
           <Input
-            label="Role / keywords"
+            label="Role"
             placeholder="Product Manager"
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
@@ -271,7 +391,7 @@ export default function JobsPage() {
         {isDiscovering ? (
           <Card className="p-8 text-center">
             <div className="mx-auto size-10 animate-pulse rounded-full bg-brand-100" />
-            <p className="mt-4 text-sm font-semibold text-slate-600">Finding jobs for you...</p>
+            <p className="mt-4 text-sm font-semibold text-slate-600">Finding opportunities for you...</p>
           </Card>
         ) : discoveryError ? (
           <Card className="p-6 text-sm text-rose-700">{discoveryError}</Card>
@@ -279,10 +399,10 @@ export default function JobsPage() {
           <Card className="p-8 text-center">
             <BriefcaseBusiness className="mx-auto size-10 text-brand-700" />
             <h2 className="mt-4 text-2xl font-bold tracking-tight text-slate-950">
-              No matching jobs were found.
+              No personalized jobs were found.
             </h2>
             <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-slate-600">
-              Try broadening your role or location filters.
+              Try refining your search or adjusting your filters.
             </p>
           </Card>
         ) : (
@@ -290,6 +410,8 @@ export default function JobsPage() {
             {recommendedJobs.map((job) => {
               const salary = formatSalary(job);
               const isSaved = jobs.some((savedJob) => savedJob.source_url === job.source_url);
+              const matchedSkills = job.matched_skills?.slice(0, 3) ?? [];
+              const missingSkills = job.missing_skills?.slice(0, 3) ?? [];
 
               return (
                 <Card key={job.external_id} className="p-5">
@@ -300,6 +422,11 @@ export default function JobsPage() {
                         <span className="rounded-md bg-slate-50 px-2.5 py-1 text-xs font-bold uppercase text-slate-600 ring-1 ring-slate-100">
                           {job.source}
                         </span>
+                        {job.match_score !== null && job.match_score !== undefined && (
+                          <span className="rounded-md bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-700 ring-1 ring-emerald-100">
+                            {job.match_score}% Match
+                          </span>
+                        )}
                       </div>
                       <p className="mt-1 text-sm font-semibold text-slate-700">{job.company_name}</p>
                       <p className="mt-2 text-sm text-slate-500">
@@ -313,6 +440,22 @@ export default function JobsPage() {
                       <p className="mt-3 max-w-4xl text-sm leading-6 text-slate-600">
                         {getDescriptionPreview(job.description)}
                       </p>
+                      {(matchedSkills.length > 0 || missingSkills.length > 0) && (
+                        <div className="mt-3 grid gap-2 text-xs text-slate-500 sm:grid-cols-2">
+                          {matchedSkills.length > 0 && (
+                            <p>
+                              <span className="font-bold text-slate-700">Matched:</span>{' '}
+                              {matchedSkills.join(' · ')}
+                            </p>
+                          )}
+                          {missingSkills.length > 0 && (
+                            <p>
+                              <span className="font-bold text-slate-700">Missing:</span>{' '}
+                              {missingSkills.join(' · ')}
+                            </p>
+                          )}
+                        </div>
+                      )}
                     </div>
                     <div className="flex shrink-0 flex-col gap-2 sm:flex-row lg:flex-col">
                       <a href={job.source_url} target="_blank" rel="noopener noreferrer">

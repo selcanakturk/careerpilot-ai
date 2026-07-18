@@ -1,0 +1,131 @@
+import os
+
+os.environ.setdefault("SUPABASE_URL", "https://example.supabase.co")
+os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "test-service-role-key")
+os.environ.setdefault("OPENAI_API_KEY", "test-openai-api-key")
+os.environ.setdefault("OPENAI_MODEL", "gpt-5-mini")
+os.environ.setdefault("GEMINI_API_KEY", "test-gemini-api-key")
+os.environ.setdefault("GEMINI_MODEL", "gemini-2.5-flash")
+
+from app.schemas.job import ExternalJobPosting
+from app.services.career_profile_service import CareerProfile
+from app.services.job_match_service import calculate_job_match, normalize_text
+
+
+OWNER_ID = "11111111-1111-1111-1111-111111111111"
+ANALYSIS_ID = "22222222-2222-2222-2222-222222222222"
+
+
+def make_profile(
+    primary_role: str = "Backend Software Engineer",
+    alternative_roles: list[str] | None = None,
+    skills: list[str] | None = None,
+    experience_level: str = "mid",
+) -> CareerProfile:
+    return CareerProfile(
+        user_id=OWNER_ID,
+        analysis_id=ANALYSIS_ID,
+        primary_role=primary_role,
+        alternative_roles=alternative_roles or ["Backend Developer"],
+        experience_level=experience_level,
+        skills=skills or ["Python", "FastAPI", "REST API"],
+        strengths=[],
+        weaknesses=[],
+        overall_score=84,
+        preferred_locations=["Turkey"],
+        remote_preference=None,
+    )
+
+
+def make_job(
+    title: str = "Backend Software Engineer",
+    description: str = "Build Python services with FastAPI and REST APIs.",
+) -> ExternalJobPosting:
+    return ExternalJobPosting(
+        external_id="job-1",
+        source="jooble",
+        title=title,
+        company_name="Acme",
+        location="Istanbul",
+        description=description,
+        source_url="https://example.com/job-1",
+    )
+
+
+def test_normalize_text_handles_case_punctuation_and_plural_forms() -> None:
+    assert normalize_text(" REST APIs,  ") == "rest api"
+
+
+def test_calculate_job_match_exact_skill_match() -> None:
+    result = calculate_job_match(
+        job=make_job(description="Python and FastAPI required."),
+        career_profile=make_profile(skills=["Python"]),
+    )
+
+    assert result.matched_skills == ["Python"]
+    assert 0 <= result.match_score <= 100
+
+
+def test_calculate_job_match_case_insensitive_skill_match() -> None:
+    result = calculate_job_match(
+        job=make_job(description="Experience with rest api design is required."),
+        career_profile=make_profile(skills=["REST API"]),
+    )
+
+    assert result.matched_skills == ["REST API"]
+
+
+def test_calculate_job_match_partial_skill_match() -> None:
+    result = calculate_job_match(
+        job=make_job(description="We use Fast API services."),
+        career_profile=make_profile(skills=["FastAPI"]),
+    )
+
+    assert result.matched_skills == ["FastAPI"]
+
+
+def test_calculate_job_match_primary_role_title_match_scores_higher_than_alternative() -> None:
+    primary_result = calculate_job_match(
+        job=make_job(title="Backend Software Engineer"),
+        career_profile=make_profile(),
+    )
+    alternative_result = calculate_job_match(
+        job=make_job(title="Backend Developer"),
+        career_profile=make_profile(),
+    )
+
+    assert primary_result.match_score > alternative_result.match_score
+
+
+def test_calculate_job_match_experience_level_compatibility() -> None:
+    senior_result = calculate_job_match(
+        job=make_job(title="Senior Backend Software Engineer", description="Senior Python engineer."),
+        career_profile=make_profile(experience_level="senior"),
+    )
+    junior_result = calculate_job_match(
+        job=make_job(title="Senior Backend Software Engineer", description="Senior Python engineer."),
+        career_profile=make_profile(experience_level="junior"),
+    )
+
+    assert senior_result.match_score > junior_result.match_score
+
+
+def test_calculate_job_match_score_stays_between_zero_and_one_hundred() -> None:
+    result = calculate_job_match(
+        job=make_job(title="Unrelated Role", description="Unrelated work."),
+        career_profile=make_profile(skills=["Python", "FastAPI"]),
+    )
+
+    assert 0 <= result.match_score <= 100
+
+
+def test_calculate_job_match_deduplicates_skills_and_extracts_conservative_missing_skills() -> None:
+    result = calculate_job_match(
+        job=make_job(description="Python, Docker and AWS experience required."),
+        career_profile=make_profile(skills=["Python", "python", "FastAPI"]),
+    )
+
+    assert result.matched_skills == ["Python"]
+    assert "Docker" in result.missing_skills
+    assert "AWS" in result.missing_skills
+    assert len(result.missing_skills) == len(set(result.missing_skills))

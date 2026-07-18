@@ -268,6 +268,40 @@ def test_complete_analysis_update_list_returns_first_record(monkeypatch) -> None
     assert str(result.id) == record["id"]
 
 
+def test_complete_analysis_response_includes_transient_career_profile_fields(monkeypatch) -> None:
+    record = make_analysis_record()
+    monkeypatch.setattr(
+        analysis_service,
+        "get_supabase_client",
+        lambda: FakeAnalysisClient(SimpleNamespace(data=[record])),
+    )
+
+    result = analysis_service.complete_analysis(
+        analysis_id=str(record["id"]),
+        result=analysis_service.CVAnalysisResult(
+            overall_score=88,
+            summary="Strong CV for the target role.",
+            strengths=[],
+            weaknesses=[],
+            skill_gaps=[],
+            cv_suggestions=[],
+            primary_role="Python Backend Engineer",
+            alternative_roles=["Backend Developer"],
+            top_skills=["Python", "FastAPI"],
+            preferred_job_types=["full_time"],
+            preferred_locations=["Turkey"],
+            remote_preference=True,
+        ),
+    )
+
+    assert result.primary_role == "Python Backend Engineer"
+    assert result.alternative_roles == ["Backend Developer"]
+    assert result.top_skills == ["Python", "FastAPI"]
+    assert result.preferred_job_types == ["full_time"]
+    assert result.preferred_locations == ["Turkey"]
+    assert result.remote_preference is True
+
+
 def test_delete_analysis_existing_record_returns_deleted_ids(monkeypatch) -> None:
     record = make_analysis_record()
     fake_client = FakeDeleteAnalysisClient(

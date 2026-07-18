@@ -157,7 +157,17 @@ def complete_analysis(analysis_id: str, result: CVAnalysisResult) -> CVAnalysisR
         "Unable to complete analysis record.",
     )
 
-    return _validate_response(data)
+    enriched_data = {
+        **data,
+        "primary_role": result.primary_role,
+        "alternative_roles": result.alternative_roles,
+        "top_skills": result.top_skills,
+        "preferred_job_types": result.preferred_job_types,
+        "preferred_locations": result.preferred_locations,
+        "remote_preference": result.remote_preference,
+    }
+
+    return _validate_response(enriched_data)
 
 
 def fail_analysis(analysis_id: str, safe_error_message: str) -> None:

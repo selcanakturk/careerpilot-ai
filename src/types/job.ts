@@ -32,6 +32,18 @@ export type ExternalJobPosting = {
   employment_type: EmploymentType | null;
   work_mode: WorkMode | null;
   category: string | null;
+  match_score?: number | null;
+  matched_skills?: string[];
+  missing_skills?: string[];
+};
+
+export type JobSearchCareerProfile = {
+  primary_role: string;
+  experience_level: string | null;
+  overall_score: number | null;
+  skills: string[];
+  strengths: string[];
+  weaknesses: string[];
 };
 
 export type JobSearchResponse = {
@@ -43,6 +55,11 @@ export type JobSearchResponse = {
   location: string | null;
   providers_used?: string[];
   providers_failed?: string[];
+  profile_used?: boolean | null;
+  analysis_id?: string | null;
+  resolved_query?: string | null;
+  resolved_location?: string | null;
+  career_profile?: JobSearchCareerProfile | null;
 };
 
 export type CreateJobPostingInput = {

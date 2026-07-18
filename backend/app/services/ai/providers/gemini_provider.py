@@ -29,6 +29,19 @@ Do not infer or evaluate discriminatory or sensitive personal attributes.
 Keep the result concise, clear, and actionable.
 Ensure overall_score is between 0 and 100.
 Ensure list fields are arrays and never null.
+Also return career profile fields for job recommendations:
+- primary_role: the strongest searchable role for this candidate and target role.
+- alternative_roles: up to 3 realistic searchable job titles from the current job market.
+- top_skills: up to 8 unique technical skills supported by the CV text.
+  Each top_skills item must be only a short searchable skill, framework, programming language,
+  database, tool, or platform name.
+  Prefer 1-3 words per item.
+  Do not return full sentences, education details, achievements, project descriptions, or
+  phrases such as "Experience with", "Knowledge of", "Hands-on", or "Strong background in".
+  Do not include skills that are not explicitly supported by the CV text.
+- preferred_job_types: likely job types such as full_time, contract, internship, or freelance when supported.
+- preferred_locations: locations supported by the CV or target context; use ["Turkey"] if not specified.
+- remote_preference: true, false, or null. Use null when the CV does not support a clear preference.
 """.strip()
 
 JOB_MATCH_SYSTEM_INSTRUCTIONS = """

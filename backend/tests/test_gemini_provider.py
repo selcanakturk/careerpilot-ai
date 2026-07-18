@@ -20,7 +20,13 @@ VALID_GEMINI_JSON = """
   "strengths": ["Roadmap ownership"],
   "weaknesses": ["Limited experimentation detail"],
   "skill_gaps": ["Experiment design"],
-  "cv_suggestions": ["Add quantified launch outcomes"]
+  "cv_suggestions": ["Add quantified launch outcomes"],
+  "primary_role": "Product Manager",
+  "alternative_roles": ["Product Owner", "Growth Product Manager"],
+  "top_skills": ["Roadmapping", "Stakeholder management", "Product discovery"],
+  "preferred_job_types": ["full_time"],
+  "preferred_locations": ["Turkey"],
+  "remote_preference": null
 }
 """.strip()
 
@@ -74,9 +80,92 @@ def test_gemini_provider_valid_structured_response_returns_result() -> None:
     assert isinstance(result, CVAnalysisResult)
     assert result.overall_score == 86
     assert result.strengths == ["Roadmap ownership"]
+    assert result.primary_role == "Product Manager"
+    assert result.alternative_roles == ["Product Owner", "Growth Product Manager"]
+    assert result.top_skills == ["Roadmapping", "Stakeholder management", "Product discovery"]
+    assert result.preferred_job_types == ["full_time"]
+    assert result.preferred_locations == ["Turkey"]
+    assert result.remote_preference is None
     assert models.generate_call is not None
     assert models.generate_call["model"] == "gemini-2.5-flash"
     assert models.model_calls == ["gemini-2.5-flash"]
+
+
+def test_gemini_provider_filters_sentence_like_top_skills() -> None:
+    response_json = """
+    {
+      "overall_score": 82,
+      "summary": "Frontend and backend project experience.",
+      "strengths": ["Project portfolio"],
+      "weaknesses": [],
+      "skill_gaps": [],
+      "cv_suggestions": [],
+      "primary_role": "Full Stack Developer",
+      "alternative_roles": ["Frontend Developer"],
+      "top_skills": [
+        "Python",
+        "Hands-on experience with modern frontend and mobile frameworks including React and Flutter",
+        "Holds a formal Software Engineering degree from Altınbaş University",
+        "python",
+        "Node.js",
+        "Strong project portfolio showcasing practical delivery"
+      ],
+      "preferred_job_types": ["full_time"],
+      "preferred_locations": ["Turkey"],
+      "remote_preference": null
+    }
+    """.strip()
+    models = FakeGeminiModels(response_text=response_json)
+    provider = GeminiProvider(client=FakeGeminiClient(models))
+
+    result = provider.analyze_cv("Built apps with Python, React, Flutter, and Node.js.", "Developer", "junior")
+
+    assert result.top_skills == ["Python", "React", "Flutter", "Node.js"]
+
+
+def test_gemini_provider_limits_top_skills_to_eight_unique_values() -> None:
+    response_json = """
+    {
+      "overall_score": 82,
+      "summary": "Backend profile.",
+      "strengths": [],
+      "weaknesses": [],
+      "skill_gaps": [],
+      "cv_suggestions": [],
+      "primary_role": "Backend Developer",
+      "alternative_roles": [],
+      "top_skills": [
+        "Python",
+        "Django",
+        "React",
+        "Flutter",
+        "Node.js",
+        "Express",
+        "MongoDB",
+        "REST API",
+        "Docker",
+        "python"
+      ],
+      "preferred_job_types": ["full_time"],
+      "preferred_locations": ["Turkey"],
+      "remote_preference": null
+    }
+    """.strip()
+    models = FakeGeminiModels(response_text=response_json)
+    provider = GeminiProvider(client=FakeGeminiClient(models))
+
+    result = provider.analyze_cv("CV text", "Backend Developer", "mid")
+
+    assert result.top_skills == [
+        "Python",
+        "Django",
+        "React",
+        "Flutter",
+        "Node.js",
+        "Express",
+        "MongoDB",
+        "REST API",
+    ]
 
 
 def test_gemini_provider_empty_cv_text_raises_value_error() -> None:

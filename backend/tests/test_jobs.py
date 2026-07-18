@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 from app.core.security import CurrentUser, get_current_user
 from app.main import app
 from app.schemas.job import ExternalJobPosting, JobMatchAIResult, JobSearchResponse
+from app.services import career_profile_service
 from app.services import job_service
 from app.services import job_discovery_service
 from app.services.ai import ai_service
@@ -363,24 +364,101 @@ def test_discover_jobs_missing_config_returns_503(monkeypatch) -> None:
     assert response.json()["detail"] == "Job recommendations are not connected yet. You can still analyze a job manually."
 
 
-def test_discovery_service_uses_roadmap_before_analysis(monkeypatch) -> None:
+def test_discovery_service_uses_explicit_query_without_career_profile(monkeypatch) -> None:
     calls: list[tuple[str, str | None]] = []
+    profile_called = False
+    multi_query_called = False
 
     class FakeProvider:
-        def search_jobs(self, query: str, location: str | None, page: int, results_per_page: int) -> dict[str, object]:
+        def search_jobs(self, query: str, location: str | None, page: int, results_per_page: int) -> JobSearchResponse:
             calls.append((query, location))
-            return {
-                "jobs": [],
-                "page": page,
-                "results_per_page": results_per_page,
-                "total_results": 0,
-                "query": query,
-                "location": location,
-            }
+            return JobSearchResponse(
+                jobs=[make_external_job("manual-1", "https://example.com/manual")],
+                page=page,
+                results_per_page=results_per_page,
+                total_results=0,
+                query=query,
+                location=location,
+            )
 
-    monkeypatch.setattr(job_service, "get_active_roadmap_target_role", lambda _user_id: "Product Manager")
-    monkeypatch.setattr(job_service, "get_latest_analysis_target_role", lambda _user_id: "Data Analyst")
+    def get_latest_career_profile(_user_id: str) -> object:
+        nonlocal profile_called
+        profile_called = True
+        raise AssertionError("Career profile should not be used for explicit queries.")
+
+    def search_all_provider_queries(**_kwargs: object) -> JobSearchResponse:
+        nonlocal multi_query_called
+        multi_query_called = True
+        raise AssertionError("Multi-query discovery should not be used for explicit queries.")
+
+    monkeypatch.setattr(career_profile_service, "get_latest_career_profile", get_latest_career_profile)
     monkeypatch.setattr(job_discovery_service, "search_all_providers", FakeProvider().search_jobs)
+    monkeypatch.setattr(job_discovery_service, "search_all_provider_queries", search_all_provider_queries)
+
+    result = job_discovery_service.discover_jobs(
+        user_id=OWNER_ID,
+        query="Python Developer",
+        location="Remote",
+        page=1,
+        results_per_page=10,
+    )
+
+    assert profile_called is False
+    assert multi_query_called is False
+    assert calls == [("Python Developer", "Remote")]
+    assert len(result.jobs) == 1
+    assert result.jobs[0].match_score is None
+    assert result.jobs[0].matched_skills == []
+    assert result.jobs[0].missing_skills == []
+    assert result.query == "Python Developer"
+    assert result.location == "Remote"
+    assert result.profile_used is False
+    assert result.analysis_id is None
+    assert result.resolved_query == "Python Developer"
+    assert result.resolved_location == "Remote"
+    assert result.career_profile is None
+    assert result.queries_used == ["Python Developer"]
+
+
+def test_discovery_service_uses_career_profile_when_query_empty(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    analysis_id = str(uuid4())
+
+    def search_all_provider_queries(
+        queries: list[str],
+        location: str | None,
+        page: int,
+        results_per_page: int,
+    ) -> JobSearchResponse:
+        captured["queries"] = queries
+        captured["location"] = location
+        return JobSearchResponse(
+            jobs=[],
+            page=page,
+            results_per_page=results_per_page,
+            total_results=0,
+            query=queries[0],
+            location=location,
+        )
+
+    monkeypatch.setattr(
+        career_profile_service,
+        "get_latest_career_profile",
+        lambda _user_id: career_profile_service.CareerProfile(
+            user_id=OWNER_ID,
+            analysis_id=analysis_id,
+            primary_role="Backend Software Engineer",
+            alternative_roles=[],
+            experience_level="mid",
+            skills=["API design", "Python backend development"],
+            strengths=["API design", "Python backend development"],
+            weaknesses=["Cloud deployment depth"],
+            overall_score=84,
+            preferred_locations=["Turkey"],
+            remote_preference=None,
+        ),
+    )
+    monkeypatch.setattr(job_discovery_service, "search_all_provider_queries", search_all_provider_queries)
 
     result = job_discovery_service.discover_jobs(
         user_id=OWNER_ID,
@@ -390,8 +468,114 @@ def test_discovery_service_uses_roadmap_before_analysis(monkeypatch) -> None:
         results_per_page=10,
     )
 
-    assert calls == [("Product Manager", None)]
-    assert result["query"] == "Product Manager"
+    assert captured["queries"] == ["Backend Software Engineer", "Backend Developer", "Python Developer"]
+    assert captured["location"] == "Turkey"
+    assert result.profile_used is True
+    assert str(result.analysis_id) == analysis_id
+    assert result.resolved_query == "Backend Software Engineer"
+    assert result.resolved_location == "Turkey"
+    assert result.queries_used == ["Backend Software Engineer", "Backend Developer", "Python Developer"]
+    assert result.career_profile is not None
+    assert result.career_profile.primary_role == "Backend Software Engineer"
+    assert result.career_profile.experience_level == "mid"
+    assert result.career_profile.overall_score == 84
+    assert result.career_profile.skills == ["API Design", "Python backend development"]
+    assert result.career_profile.strengths == ["API design", "Python backend development"]
+    assert result.career_profile.weaknesses == ["Cloud deployment depth"]
+
+
+def test_discovery_service_scores_sorts_and_paginates_profile_results(monkeypatch) -> None:
+    analysis_id = str(uuid4())
+
+    def search_all_provider_queries(**_kwargs: object) -> JobSearchResponse:
+        return JobSearchResponse(
+            jobs=[
+                make_external_job(
+                    "low",
+                    "https://example.com/low",
+                    "General backend role.",
+                    title="Backend Developer",
+                ),
+                make_external_job(
+                    "high",
+                    "https://example.com/high",
+                    "Build Python services with FastAPI and PostgreSQL.",
+                    title="Backend Software Engineer",
+                ),
+                make_external_job(
+                    "medium",
+                    "https://example.com/medium",
+                    "Python APIs for internal tools.",
+                    title="Python Developer",
+                ),
+            ],
+            page=1,
+            results_per_page=3,
+            total_results=3,
+            query="Backend Software Engineer",
+            location="Turkey",
+        )
+
+    monkeypatch.setattr(
+        career_profile_service,
+        "get_latest_career_profile",
+        lambda _user_id: career_profile_service.CareerProfile(
+            user_id=OWNER_ID,
+            analysis_id=analysis_id,
+            primary_role="Backend Software Engineer",
+            alternative_roles=["Python Developer"],
+            experience_level="mid",
+            skills=["Python", "FastAPI", "PostgreSQL"],
+            strengths=["Python"],
+            weaknesses=[],
+            overall_score=84,
+            preferred_locations=["Turkey"],
+            remote_preference=None,
+        ),
+    )
+    monkeypatch.setattr(job_discovery_service, "search_all_provider_queries", search_all_provider_queries)
+
+    result = job_discovery_service.discover_jobs(
+        user_id=OWNER_ID,
+        query=None,
+        location=None,
+        page=1,
+        results_per_page=2,
+    )
+
+    assert [job.external_id for job in result.jobs] == ["high", "medium"]
+    assert result.jobs[0].match_score is not None
+    assert result.jobs[0].match_score > (result.jobs[1].match_score or 0)
+    assert result.jobs[0].matched_skills == ["Python", "FastAPI", "PostgreSQL"]
+    assert result.page == 1
+    assert result.results_per_page == 2
+
+
+def test_discovery_service_profile_missing_keeps_target_role_error(monkeypatch) -> None:
+    provider_called = False
+
+    def search_all_providers(**_kwargs: object) -> JobSearchResponse:
+        nonlocal provider_called
+        provider_called = True
+        return JobSearchResponse(jobs=[], page=1, results_per_page=10, query="unused")
+
+    monkeypatch.setattr(career_profile_service, "get_latest_career_profile", lambda _user_id: None)
+    monkeypatch.setattr(job_discovery_service, "search_all_providers", search_all_providers)
+
+    try:
+        job_discovery_service.discover_jobs(
+            user_id=OWNER_ID,
+            query=None,
+            location=None,
+            page=1,
+            results_per_page=10,
+        )
+    except job_discovery_service.TargetRoleRequiredError:
+        pass
+    else:
+        raise AssertionError("TargetRoleRequiredError was not raised.")
+
+    assert provider_called is False
 
 
 def test_auto_mode_selects_only_configured_providers(monkeypatch) -> None:
@@ -637,6 +821,81 @@ def test_aggregator_deduplicates_by_title_company_location(monkeypatch) -> None:
     assert result.jobs[0].external_id == "second"
 
 
+def test_aggregator_searches_each_query_and_deduplicates_preserving_query_order(monkeypatch) -> None:
+    calls: list[str] = []
+
+    class MultiQueryProvider:
+        def search_jobs(self, query: str, location: str | None, page: int, results_per_page: int) -> JobSearchResponse:
+            calls.append(query)
+
+            if query == "Backend Software Engineer":
+                jobs = [
+                    make_external_job(
+                        "primary-1",
+                        "https://example.com/primary",
+                        "Primary role match.",
+                        title="Backend Software Engineer",
+                    ),
+                    make_external_job(
+                        "duplicate-short",
+                        "https://example.com/duplicate",
+                        "Short.",
+                        title="Backend Developer",
+                    ),
+                ]
+            elif query == "Backend Developer":
+                jobs = [
+                    make_external_job(
+                        "duplicate-long",
+                        "https://example.com/duplicate",
+                        "Longer duplicate description for the same posting.",
+                        title="Backend Developer",
+                    ),
+                    make_external_job(
+                        "alternative-1",
+                        "https://example.com/alternative",
+                        "Alternative role match.",
+                        title="Backend Platform Developer",
+                    ),
+                ]
+            else:
+                jobs = [make_external_job("python-1", "https://example.com/python", title="Python Developer")]
+
+            return JobSearchResponse(
+                jobs=jobs,
+                page=page,
+                results_per_page=results_per_page,
+                total_results=len(jobs),
+                query=query,
+                location=location,
+            )
+
+    monkeypatch.setattr(
+        job_aggregator,
+        "select_provider_registrations",
+        lambda: [provider_registry.ProviderRegistration("jooble", MultiQueryProvider(), True, 10, ("tr",))],
+    )
+
+    result = job_aggregator.search_all_provider_queries(
+        queries=["Backend Software Engineer", "Backend Developer", "Python Developer"],
+        location="Turkey",
+        page=1,
+        results_per_page=10,
+    )
+
+    assert calls == ["Backend Software Engineer", "Backend Developer", "Python Developer"]
+    assert [job.external_id for job in result.jobs] == [
+        "primary-1",
+        "duplicate-long",
+        "alternative-1",
+        "python-1",
+    ]
+    assert result.query == "Backend Software Engineer"
+    assert result.location == "Turkey"
+    assert result.total_results == 5
+    assert result.providers_used == ["jooble"]
+
+
 def test_jooble_provider_posts_query_and_empty_location(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
@@ -678,7 +937,20 @@ def test_jsearch_provider_gets_endpoint_with_headers_and_location_query(monkeypa
             return None
 
         def json(self) -> dict[str, object]:
-            return {"data": [], "estimated_count": 0}
+            return {
+                "data": {
+                    "jobs": [
+                        {
+                            "job_id": "endpoint-1",
+                            "job_title": "Software Engineer",
+                            "employer_name": "Acme",
+                            "job_description": "Build APIs.",
+                            "job_apply_link": "https://example.com/endpoint-1",
+                        }
+                    ]
+                },
+                "estimated_count": 1,
+            }
 
     class FakeClient:
         def get(self, url: str, headers: dict[str, str], params: dict[str, object]) -> FakeResponse:
@@ -707,13 +979,11 @@ def test_jsearch_provider_gets_endpoint_with_headers_and_location_query(monkeypa
     }
     assert captured["params"] == {
         "query": "Software Engineer in Istanbul, Turkey",
-        "country": "tr",
-        "language": "tr",
         "date_posted": "all",
     }
 
 
-def test_jsearch_provider_uses_turkey_query_when_location_empty(monkeypatch) -> None:
+def test_jsearch_provider_uses_plain_role_query_when_location_empty(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
     class FakeResponse:
@@ -736,8 +1006,109 @@ def test_jsearch_provider_uses_turkey_query_when_location_empty(monkeypatch) -> 
 
     jsearch_provider.JSearchJobProvider(client=FakeClient()).search_jobs("Software Engineer", None, 1, 10)
 
-    assert captured["params"]["query"] == "Software Engineer in Turkey"
-    assert captured["params"]["language"] == "tr"
+    assert captured["params"]["query"] == "Software Engineer"
+    assert "language" not in captured["params"]
+    assert "country" not in captured["params"]
+
+
+def test_jsearch_provider_does_not_duplicate_turkey_in_location(monkeypatch) -> None:
+    captured_params: list[dict[str, object]] = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {
+                "data": {
+                    "jobs": [
+                        {
+                            "job_id": "location-1",
+                            "job_title": "Backend Developer",
+                            "employer_name": "Acme",
+                            "job_description": "Build APIs.",
+                            "job_apply_link": "https://example.com/location-1",
+                        }
+                    ]
+                }
+            }
+
+    class FakeClient:
+        def get(self, *_args: object, **kwargs: object) -> FakeResponse:
+            captured_params.append(kwargs["params"])
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        jsearch_provider,
+        "get_settings",
+        lambda: SimpleNamespace(jsearch_api_key="rapid-key", jsearch_api_host="jsearch.p.rapidapi.com"),
+    )
+
+    provider = jsearch_provider.JSearchJobProvider(client=FakeClient())
+    provider.search_jobs("Backend Developer", "Turkey", 1, 10)
+
+    assert captured_params[-1]["query"] == "Backend Developer in Turkey"
+
+    provider.search_jobs("Backend Developer", "Istanbul, Turkey", 1, 10)
+
+    assert captured_params[-1]["query"] == "Backend Developer in Istanbul, Turkey"
+
+
+def test_jsearch_provider_falls_back_to_broader_query_when_location_query_is_empty(monkeypatch) -> None:
+    captured_params: list[dict[str, object]] = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def __init__(self, payload: dict[str, object]) -> None:
+            self._payload = payload
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return self._payload
+
+    class FakeClient:
+        def get(self, *_args: object, **kwargs: object) -> FakeResponse:
+            captured_params.append(kwargs["params"])
+
+            if len(captured_params) == 1:
+                return FakeResponse({"data": {"jobs": []}})
+
+            return FakeResponse(
+                {
+                    "data": {
+                        "jobs": [
+                            {
+                                "job_id": "broad-1",
+                                "job_title": "Software Engineer",
+                                "employer_name": "Acme",
+                                "job_description": "Build backend APIs.",
+                                "job_apply_link": "https://example.com/broad-1",
+                            }
+                        ]
+                    }
+                }
+            )
+
+    monkeypatch.setattr(
+        jsearch_provider,
+        "get_settings",
+        lambda: SimpleNamespace(jsearch_api_key="rapid-key", jsearch_api_host="jsearch.p.rapidapi.com"),
+    )
+
+    result = jsearch_provider.JSearchJobProvider(client=FakeClient()).search_jobs(
+        "Software Engineer",
+        "Turkey",
+        1,
+        10,
+    )
+
+    assert [params["query"] for params in captured_params] == ["Software Engineer in Turkey", "Software Engineer"]
+    assert len(result.jobs) == 1
 
 
 def test_jsearch_provider_page_after_first_does_not_call_upstream(monkeypatch) -> None:
@@ -839,6 +1210,57 @@ def test_jsearch_provider_reads_jobs_fallback_field(monkeypatch) -> None:
 
     assert len(result.jobs) == 1
     assert result.jobs[0].title == "Yazılım Mühendisi"
+
+
+def test_jsearch_provider_reads_nested_data_jobs_and_cursor(monkeypatch, caplog) -> None:
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {
+                "status": "OK",
+                "data": {
+                    "cursor": "next-page-token",
+                    "jobs": [
+                        {
+                            "job_id": "nested-1",
+                            "job_title": "Backend Software Engineer",
+                            "employer_name": "Acme",
+                            "job_description": "Build backend systems.",
+                            "job_apply_link": "https://example.com/nested-1",
+                        }
+                    ],
+                },
+            }
+
+    class FakeClient:
+        def get(self, *_args: object, **_kwargs: object) -> FakeResponse:
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        jsearch_provider,
+        "get_settings",
+        lambda: SimpleNamespace(jsearch_api_key="rapid-key", jsearch_api_host="jsearch.p.rapidapi.com"),
+    )
+
+    with caplog.at_level("INFO"):
+        result = jsearch_provider.JSearchJobProvider(client=FakeClient()).search_jobs(
+            "Software Engineer",
+            "Istanbul",
+            1,
+            10,
+        )
+
+    assert len(result.jobs) == 1
+    assert result.jobs[0].external_id == "nested-1"
+    assert "JSearch status: 200" in caplog.text
+    assert "Jobs returned: 1" in caplog.text
+    assert "Cursor: present" in caplog.text
+    assert "First title: Backend Software Engineer" in caplog.text
+    assert "received=1, normalized=1, discarded=0" in caplog.text
 
 
 def test_jsearch_provider_reads_results_fallback_field(monkeypatch) -> None:

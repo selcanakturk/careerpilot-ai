@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.schemas.analysis import normalize_top_skills
+
 
 EmploymentType = Literal["full_time", "part_time", "internship", "contract", "freelance"]
 WorkMode = Literal["onsite", "hybrid", "remote"]
@@ -97,6 +99,23 @@ class ExternalJobPosting(BaseModel):
     employment_type: EmploymentType | None = None
     work_mode: WorkMode | None = None
     category: str | None = None
+    match_score: int | None = None
+    matched_skills: list[str] = Field(default_factory=list)
+    missing_skills: list[str] = Field(default_factory=list)
+
+
+class JobSearchCareerProfile(BaseModel):
+    primary_role: str
+    experience_level: str
+    overall_score: int
+    skills: list[str] = Field(default_factory=list)
+    strengths: list[str] = Field(default_factory=list)
+    weaknesses: list[str] = Field(default_factory=list)
+
+    @field_validator("skills", mode="before")
+    @classmethod
+    def validate_skills(cls, value: object) -> list[str]:
+        return normalize_top_skills(value)
 
 
 class JobSearchResponse(BaseModel):
@@ -108,3 +127,9 @@ class JobSearchResponse(BaseModel):
     location: str | None = None
     providers_used: list[str] = Field(default_factory=list)
     providers_failed: list[str] = Field(default_factory=list)
+    profile_used: bool | None = None
+    analysis_id: UUID | None = None
+    resolved_query: str | None = None
+    resolved_location: str | None = None
+    career_profile: JobSearchCareerProfile | None = None
+    queries_used: list[str] = Field(default_factory=list)

@@ -87,9 +87,24 @@ def _build_search_query(query: str, location: str | None) -> str:
     normalized_location = location.strip() if location and location.strip() else ""
 
     if normalized_location:
+        normalized_location_key = normalized_location.lower()
+
+        if normalized_location_key in {"turkey", "tr", "türkiye", "turkiye"}:
+            return f"{normalized_query} in Turkey"
+
+        if "turkey" in normalized_location_key or "türkiye" in normalized_location_key:
+            return f"{normalized_query} in {normalized_location}"
+
         return f"{normalized_query} in {normalized_location}, Turkey"
 
-    return f"{normalized_query} in Turkey"
+    return normalized_query
+
+
+def _build_search_params(query: str, location: str | None, *, include_location: bool) -> dict[str, object]:
+    return {
+        "query": _build_search_query(query, location) if include_location else query.strip(),
+        "date_posted": "all",
+    }
 
 
 def _normalize_employment_type(value: object) -> str | None:
@@ -128,6 +143,14 @@ def _build_location(raw_job: dict[str, Any]) -> str | None:
 
 
 def _read_cursor(payload: dict[str, object]) -> str | None:
+    nested_data = payload.get("data")
+
+    if isinstance(nested_data, dict):
+        nested_cursor = nested_data.get("cursor") or nested_data.get("next_cursor")
+
+        if isinstance(nested_cursor, str | int):
+            return str(nested_cursor)
+
     cursor = payload.get("cursor") or payload.get("next_cursor")
 
     if isinstance(cursor, str | int):
@@ -137,6 +160,14 @@ def _read_cursor(payload: dict[str, object]) -> str | None:
 
 
 def _read_job_rows(payload: dict[str, object]) -> list[object]:
+    nested_data = payload.get("data")
+
+    if isinstance(nested_data, dict):
+        nested_jobs = nested_data.get("jobs")
+
+        if isinstance(nested_jobs, list):
+            return nested_jobs
+
     for key in ("data", "jobs", "results"):
         rows = payload.get(key)
 
@@ -144,6 +175,16 @@ def _read_job_rows(payload: dict[str, object]) -> list[object]:
             return rows
 
     return []
+
+
+def _read_first_job_title(raw_jobs: list[object]) -> str | None:
+    for raw_job in raw_jobs:
+        if not isinstance(raw_job, dict):
+            continue
+
+        return _to_text(raw_job.get("job_title"))
+
+    return None
 
 
 def _normalize_job(raw_job: dict[str, Any]) -> ExternalJobPosting | None:
@@ -202,21 +243,53 @@ class JSearchJobProvider:
                 location=location,
             )
 
+        response = None
+        payload: dict[str, object] | None = None
+        raw_jobs: list[object] = []
+        cursor: str | None = None
+        first_title: str | None = None
+
         try:
-            response = self._client.get(
-                JSEARCH_API_URL,
-                headers={
-                    "X-RapidAPI-Key": settings.jsearch_api_key,
-                    "X-RapidAPI-Host": settings.jsearch_api_host,
-                },
-                params={
-                    "query": _build_search_query(query, location),
-                    "country": "tr",
-                    "language": "tr",
-                    "date_posted": "all",
+            headers = {
+                "X-RapidAPI-Key": settings.jsearch_api_key,
+                "X-RapidAPI-Host": settings.jsearch_api_host,
+            }
+            first_params = _build_search_params(query, location, include_location=True)
+            response = self._client.get(JSEARCH_API_URL, headers=headers, params=first_params)
+            response.raise_for_status()
+            payload = response.json()
+
+            if not isinstance(payload, dict):
+                raise RuntimeError("Unexpected job discovery response.")
+
+            raw_jobs = _read_job_rows(payload)
+
+            if not raw_jobs and first_params["query"] != query.strip():
+                logger.info("JSearch returned no jobs for location-constrained query; trying broader role query.")
+                response = self._client.get(
+                    JSEARCH_API_URL,
+                    headers=headers,
+                    params=_build_search_params(query, location, include_location=False),
+                )
+                response.raise_for_status()
+                payload = response.json()
+
+                if not isinstance(payload, dict):
+                    raise RuntimeError("Unexpected job discovery response.")
+
+                raw_jobs = _read_job_rows(payload)
+
+            cursor = _read_cursor(payload)
+            first_title = _read_first_job_title(raw_jobs)
+
+            logger.info(
+                "JSearch request completed.",
+                extra={
+                    "status_code": getattr(response, "status_code", "unknown"),
+                    "query": query,
+                    "location": location,
                 },
             )
-            response.raise_for_status()
         except httpx.TimeoutException as exc:
             logger.warning("JSearch job search timed out.")
             raise TemporaryJobDiscoveryError("Job discovery provider timed out.") from exc
@@ -241,16 +314,20 @@ class JSearchJobProvider:
             logger.error("JSearch job search returned non-retryable status.", extra={"status_code": status_code})
             raise RuntimeError("Unable to search jobs.") from exc
 
-        payload = response.json()
-
-        if not isinstance(payload, dict):
-            raise RuntimeError("Unexpected job discovery response.")
-
         normalized_jobs: list[ExternalJobPosting] = []
         seen_external_ids: set[str] = set()
         seen_source_urls: set[str] = set()
 
-        raw_jobs = _read_job_rows(payload)
+        logger.info(
+            "JSearch status: %s",
+            getattr(response, "status_code", "unknown"),
+        )
+        logger.info("Jobs returned: %s", len(raw_jobs))
+        logger.info("Cursor: %s", "present" if cursor else "missing")
+
+        if first_title:
+            logger.info("First title: %s", first_title)
+
         for raw_job in raw_jobs:
             if not isinstance(raw_job, dict):
                 continue
@@ -268,6 +345,12 @@ class JSearchJobProvider:
             normalized_jobs.append(normalized_job)
 
         logger.info(
+            "JSearch normalization: received=%s, normalized=%s, discarded=%s",
+            len(raw_jobs),
+            len(normalized_jobs),
+            len(raw_jobs) - len(normalized_jobs),
+        )
+        logger.info(
             "JSearch response received: keys=%s, raw_jobs=%s, normalized_jobs=%s",
             sorted(payload.keys()),
             len(raw_jobs),
@@ -275,7 +358,6 @@ class JSearchJobProvider:
         )
 
         total_results = payload.get("estimated_count") or payload.get("total_count")
-        _read_cursor(payload)
 
         return JobSearchResponse(
             jobs=normalized_jobs,
