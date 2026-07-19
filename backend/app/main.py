@@ -7,9 +7,11 @@ from app.api.routes.jobs import router as jobs_router
 from app.api.routes.roadmaps import router as roadmaps_router
 from app.api.routes.uploads import router as uploads_router
 from app.core.config import get_settings
+from app.services.jobs.provider_registry import log_provider_configuration
 
 
 settings = get_settings()
+log_provider_configuration()
 
 app = FastAPI(title=settings.app_name, version=settings.app_version)
 

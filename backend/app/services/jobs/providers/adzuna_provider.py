@@ -13,6 +13,27 @@ logger = logging.getLogger(__name__)
 
 ADZUNA_API_BASE_URL = "https://api.adzuna.com/v1/api/jobs"
 REQUEST_TIMEOUT_SECONDS = 12.0
+MAX_ERROR_SUMMARY_CHARACTERS = 240
+ADZUNA_FALLBACK_COUNTRY = "gb"
+ADZUNA_SUPPORTED_COUNTRIES = {
+    "au",
+    "at",
+    "be",
+    "br",
+    "ca",
+    "de",
+    "fr",
+    "gb",
+    "in",
+    "it",
+    "mx",
+    "nl",
+    "nz",
+    "pl",
+    "sg",
+    "za",
+    "us",
+}
 
 
 def _to_text(value: object) -> str | None:
@@ -123,6 +144,36 @@ def _normalize_job(raw_job: dict[str, object]) -> ExternalJobPosting | None:
         return None
 
 
+def _safe_error_body_summary(response: httpx.Response) -> dict[str, object]:
+    try:
+        payload = response.json()
+    except ValueError:
+        return {"body_preview": response.text[:MAX_ERROR_SUMMARY_CHARACTERS]}
+
+    if not isinstance(payload, dict):
+        return {"body_type": type(payload).__name__}
+
+    summary: dict[str, object] = {"keys": sorted(payload.keys())}
+
+    for key in ("status", "message", "error", "detail"):
+        value = payload.get(key)
+
+        if isinstance(value, str):
+            summary[key] = value[:MAX_ERROR_SUMMARY_CHARACTERS]
+
+    return summary
+
+
+def _effective_country(country: str) -> str:
+    normalized_country = country.strip().lower()
+
+    if normalized_country in ADZUNA_SUPPORTED_COUNTRIES:
+        return normalized_country
+
+    logger.warning("Adzuna market fallback: %s", ADZUNA_FALLBACK_COUNTRY)
+    return ADZUNA_FALLBACK_COUNTRY
+
+
 class AdzunaJobProvider:
     def __init__(self, client: httpx.Client | None = None) -> None:
         self._client = client or httpx.Client(timeout=REQUEST_TIMEOUT_SECONDS)
@@ -140,8 +191,21 @@ class AdzunaJobProvider:
             raise JobDiscoveryConfigurationError("Adzuna credentials are missing.")
 
         try:
+            country = _effective_country(settings.adzuna_country)
+            url = f"{ADZUNA_API_BASE_URL}/{country}/search/{page}"
+            logger.info(
+                "Calling job provider.",
+                extra={
+                    "provider": "adzuna",
+                    "url": url,
+                    "query": query,
+                    "has_location": bool(location),
+                    "page": page,
+                    "country": country,
+                },
+            )
             response = self._client.get(
-                f"{ADZUNA_API_BASE_URL}/{settings.adzuna_country}/search/{page}",
+                url,
                 params={
                     "app_id": settings.adzuna_app_id,
                     "app_key": settings.adzuna_app_key,
@@ -152,21 +216,36 @@ class AdzunaJobProvider:
                     "content-type": "application/json",
                 },
             )
+            logger.info(
+                "Job provider HTTP response received.",
+                extra={"provider": "adzuna", "status_code": getattr(response, "status_code", "unknown")},
+            )
             response.raise_for_status()
         except httpx.TimeoutException as exc:
-            logger.warning("Adzuna job search timed out.")
+            logger.warning("Adzuna job search timed out.", extra={"provider": "adzuna"})
             raise TemporaryJobDiscoveryError("Job discovery provider timed out.") from exc
         except httpx.RequestError as exc:
-            logger.warning("Adzuna job search request failed: %s", type(exc).__name__)
+            logger.warning(
+                "Adzuna job search request failed: %s",
+                type(exc).__name__,
+                extra={"provider": "adzuna"},
+            )
             raise TemporaryJobDiscoveryError("Job discovery provider request failed.") from exc
         except httpx.HTTPStatusError as exc:
             status_code = exc.response.status_code
+            error_summary = _safe_error_body_summary(exc.response)
 
             if status_code == 429 or status_code >= 500:
-                logger.warning("Adzuna job search returned temporary status.", extra={"status_code": status_code})
+                logger.warning(
+                    "Adzuna job search returned temporary status.",
+                    extra={"provider": "adzuna", "status_code": status_code, "response_summary": error_summary},
+                )
                 raise TemporaryJobDiscoveryError("Job discovery provider is unavailable.") from exc
 
-            logger.exception("Adzuna job search returned non-retryable status.", extra={"status_code": status_code})
+            logger.exception(
+                "Adzuna job search returned non-retryable status.",
+                extra={"provider": "adzuna", "status_code": status_code, "response_summary": error_summary},
+            )
             raise RuntimeError("Unable to search jobs.") from exc
 
         payload = response.json()

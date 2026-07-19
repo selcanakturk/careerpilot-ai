@@ -134,3 +134,17 @@ class JobSearchResponse(BaseModel):
     resolved_location: str | None = None
     career_profile: JobSearchCareerProfile | None = None
     queries_used: list[str] = Field(default_factory=list)
+    provider_unavailable: bool = False
+
+
+class CompletedAnalysisOptionResponse(BaseModel):
+    upload_id: UUID
+    analysis_id: UUID
+    filename: str
+    analyzed_at: datetime
+    target_role: str
+    overall_score: int
+
+
+class CompletedAnalysisOptionsResponse(BaseModel):
+    items: list[CompletedAnalysisOptionResponse]

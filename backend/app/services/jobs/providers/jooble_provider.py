@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 JOOBLE_API_BASE_URL = "https://jooble.org/api"
 REQUEST_TIMEOUT_SECONDS = 12.0
+MAX_ERROR_SUMMARY_CHARACTERS = 240
 
 
 def _to_text(value: object) -> str | None:
@@ -121,6 +122,26 @@ def _normalize_job(raw_job: dict[str, Any]) -> ExternalJobPosting | None:
         return None
 
 
+def _safe_error_body_summary(response: httpx.Response) -> dict[str, object]:
+    try:
+        payload = response.json()
+    except ValueError:
+        return {"body_preview": response.text[:MAX_ERROR_SUMMARY_CHARACTERS]}
+
+    if not isinstance(payload, dict):
+        return {"body_type": type(payload).__name__}
+
+    summary: dict[str, object] = {"keys": sorted(payload.keys())}
+
+    for key in ("status", "message", "error", "detail"):
+        value = payload.get(key)
+
+        if isinstance(value, str):
+            summary[key] = value[:MAX_ERROR_SUMMARY_CHARACTERS]
+
+    return summary
+
+
 class JoobleJobProvider:
     def __init__(self, client: httpx.Client | None = None) -> None:
         self._client = client or httpx.Client(timeout=REQUEST_TIMEOUT_SECONDS)
@@ -138,6 +159,16 @@ class JoobleJobProvider:
             raise JobDiscoveryConfigurationError("Jooble API key is missing.")
 
         try:
+            logger.info(
+                "Calling job provider.",
+                extra={
+                    "provider": "jooble",
+                    "url": JOOBLE_API_BASE_URL,
+                    "query": query,
+                    "has_location": bool(location),
+                    "page": page,
+                },
+            )
             response = self._client.post(
                 f"{JOOBLE_API_BASE_URL}/{settings.jooble_api_key}",
                 json={
@@ -146,25 +177,43 @@ class JoobleJobProvider:
                     "page": page,
                 },
             )
+            logger.info(
+                "Job provider HTTP response received.",
+                extra={"provider": "jooble", "status_code": getattr(response, "status_code", "unknown")},
+            )
             response.raise_for_status()
         except httpx.TimeoutException as exc:
-            logger.warning("Jooble job search timed out.")
+            logger.warning("Jooble job search timed out.", extra={"provider": "jooble", "url": JOOBLE_API_BASE_URL})
             raise TemporaryJobDiscoveryError("Job discovery provider timed out.") from exc
         except httpx.RequestError as exc:
-            logger.warning("Jooble job search request failed: %s", type(exc).__name__)
+            logger.warning(
+                "Jooble job search request failed: %s",
+                type(exc).__name__,
+                extra={"provider": "jooble", "url": JOOBLE_API_BASE_URL},
+            )
             raise TemporaryJobDiscoveryError("Job discovery provider request failed.") from exc
         except httpx.HTTPStatusError as exc:
             status_code = exc.response.status_code
+            error_summary = _safe_error_body_summary(exc.response)
 
             if status_code in {401, 403}:
-                logger.warning("Jooble job search credentials were rejected.", extra={"status_code": status_code})
+                logger.warning(
+                    "Jooble job search credentials were rejected.",
+                    extra={"provider": "jooble", "status_code": status_code, "response_summary": error_summary},
+                )
                 raise JobDiscoveryConfigurationError("Jooble API key is invalid.") from exc
 
             if status_code == 429 or status_code >= 500:
-                logger.warning("Jooble job search returned temporary status.", extra={"status_code": status_code})
+                logger.warning(
+                    "Jooble job search returned temporary status.",
+                    extra={"provider": "jooble", "status_code": status_code, "response_summary": error_summary},
+                )
                 raise TemporaryJobDiscoveryError("Job discovery provider is unavailable.") from exc
 
-            logger.error("Jooble job search returned non-retryable status.", extra={"status_code": status_code})
+            logger.error(
+                "Jooble job search returned non-retryable status.",
+                extra={"provider": "jooble", "status_code": status_code, "response_summary": error_summary},
+            )
             raise RuntimeError("Unable to search jobs.") from exc
 
         payload = response.json()

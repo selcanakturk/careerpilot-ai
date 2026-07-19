@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import logging
 
 from app.core.config import get_settings
 from app.services.jobs.providers.adzuna_provider import AdzunaJobProvider
@@ -26,6 +27,9 @@ ADZUNA_SUPPORTED_COUNTRIES = {
     "za",
     "us",
 }
+ADZUNA_FALLBACK_COUNTRY = "gb"
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -40,6 +44,9 @@ class ProviderRegistration:
 def get_provider_registrations() -> list[ProviderRegistration]:
     settings = get_settings()
     adzuna_country = settings.adzuna_country.strip().lower()
+    effective_adzuna_country = (
+        adzuna_country if adzuna_country in ADZUNA_SUPPORTED_COUNTRIES else ADZUNA_FALLBACK_COUNTRY
+    )
 
     return [
         ProviderRegistration(
@@ -53,16 +60,15 @@ def get_provider_registrations() -> list[ProviderRegistration]:
             name="jooble",
             provider=JoobleJobProvider(),
             configured=bool(settings.jooble_api_key.strip()),
-            priority=10,
+            priority=20,
             supported_countries=("tr", "global"),
         ),
         ProviderRegistration(
             name="adzuna",
             provider=AdzunaJobProvider(),
-            configured=bool(settings.adzuna_app_id.strip() and settings.adzuna_app_key.strip())
-            and adzuna_country in ADZUNA_SUPPORTED_COUNTRIES,
-            priority=20,
-            supported_countries=(adzuna_country,) if adzuna_country in ADZUNA_SUPPORTED_COUNTRIES else (),
+            configured=bool(settings.adzuna_app_id.strip() and settings.adzuna_app_key.strip()),
+            priority=10,
+            supported_countries=(effective_adzuna_country,),
         ),
     ]
 
@@ -84,14 +90,43 @@ def select_provider_registrations() -> list[ProviderRegistration]:
             raise JobDiscoveryConfigurationError("Selected job provider is not available.")
 
         if not selected_registration.configured:
-            if provider_mode == "adzuna":
-                adzuna_country = get_settings().adzuna_country.strip().lower()
-
-                if adzuna_country and adzuna_country not in ADZUNA_SUPPORTED_COUNTRIES:
-                    raise JobDiscoveryConfigurationError("Selected job provider does not support this country.")
-
             raise JobDiscoveryConfigurationError("Job discovery provider is not configured.")
 
-        return [selected_registration]
+        fallback_registrations = [
+            registration
+            for registration in registrations
+            if registration.configured
+            and registration.name != selected_registration.name
+            and registration.priority > selected_registration.priority
+        ]
+
+        return [selected_registration, *fallback_registrations]
 
     raise JobDiscoveryConfigurationError("Unsupported job discovery provider.")
+
+
+def get_provider_configuration_summary() -> dict[str, object]:
+    registrations = get_provider_registrations()
+
+    return {
+        "jsearch_configured": next(
+            (registration.configured for registration in registrations if registration.name == "jsearch"),
+            False,
+        ),
+        "adzuna_configured": next(
+            (registration.configured for registration in registrations if registration.name == "adzuna"),
+            False,
+        ),
+        "jooble_configured": next(
+            (registration.configured for registration in registrations if registration.name == "jooble"),
+            False,
+        ),
+        "active_provider_order": [registration.name for registration in select_provider_registrations()],
+    }
+
+
+def log_provider_configuration() -> None:
+    try:
+        logger.info("Job provider configuration loaded.", extra=get_provider_configuration_summary())
+    except JobDiscoveryConfigurationError as exc:
+        logger.warning("Job provider configuration is incomplete: %s", exc)

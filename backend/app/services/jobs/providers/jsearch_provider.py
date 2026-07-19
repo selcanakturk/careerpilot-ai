@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 JSEARCH_API_URL = "https://jsearch.p.rapidapi.com/search-v2"
 REQUEST_TIMEOUT_SECONDS = 12.0
+MAX_ERROR_SUMMARY_CHARACTERS = 240
 
 
 def _to_text(value: object) -> str | None:
@@ -187,6 +188,26 @@ def _read_first_job_title(raw_jobs: list[object]) -> str | None:
     return None
 
 
+def _safe_error_body_summary(response: httpx.Response) -> dict[str, object]:
+    try:
+        payload = response.json()
+    except ValueError:
+        return {"body_preview": response.text[:MAX_ERROR_SUMMARY_CHARACTERS]}
+
+    if not isinstance(payload, dict):
+        return {"body_type": type(payload).__name__}
+
+    summary: dict[str, object] = {"keys": sorted(payload.keys())}
+
+    for key in ("status", "message", "error", "detail"):
+        value = payload.get(key)
+
+        if isinstance(value, str):
+            summary[key] = value[:MAX_ERROR_SUMMARY_CHARACTERS]
+
+    return summary
+
+
 def _normalize_job(raw_job: dict[str, Any]) -> ExternalJobPosting | None:
     source_url = _select_apply_url(raw_job)
     title = _to_text(raw_job.get("job_title"))
@@ -255,7 +276,21 @@ class JSearchJobProvider:
                 "X-RapidAPI-Host": settings.jsearch_api_host,
             }
             first_params = _build_search_params(query, location, include_location=True)
+            logger.info(
+                "Calling job provider.",
+                extra={
+                    "provider": "jsearch",
+                    "url": JSEARCH_API_URL,
+                    "query": first_params["query"],
+                    "has_location": bool(location),
+                    "page": page,
+                },
+            )
             response = self._client.get(JSEARCH_API_URL, headers=headers, params=first_params)
+            logger.info(
+                "Job provider HTTP response received.",
+                extra={"provider": "jsearch", "status_code": getattr(response, "status_code", "unknown")},
+            )
             response.raise_for_status()
             payload = response.json()
 
@@ -266,10 +301,24 @@ class JSearchJobProvider:
 
             if not raw_jobs and first_params["query"] != query.strip():
                 logger.info("JSearch returned no jobs for location-constrained query; trying broader role query.")
+                broader_params = _build_search_params(query, location, include_location=False)
+                logger.info(
+                    "Calling job provider broader fallback query.",
+                    extra={
+                        "provider": "jsearch",
+                        "url": JSEARCH_API_URL,
+                        "query": broader_params["query"],
+                        "page": page,
+                    },
+                )
                 response = self._client.get(
                     JSEARCH_API_URL,
                     headers=headers,
-                    params=_build_search_params(query, location, include_location=False),
+                    params=broader_params,
+                )
+                logger.info(
+                    "Job provider HTTP response received.",
+                    extra={"provider": "jsearch", "status_code": getattr(response, "status_code", "unknown")},
                 )
                 response.raise_for_status()
                 payload = response.json()
@@ -291,27 +340,44 @@ class JSearchJobProvider:
                 },
             )
         except httpx.TimeoutException as exc:
-            logger.warning("JSearch job search timed out.")
+            logger.warning("JSearch job search timed out.", extra={"provider": "jsearch", "url": JSEARCH_API_URL})
             raise TemporaryJobDiscoveryError("Job discovery provider timed out.") from exc
         except httpx.RequestError as exc:
-            logger.warning("JSearch job search request failed: %s", type(exc).__name__)
+            logger.warning(
+                "JSearch job search request failed: %s",
+                type(exc).__name__,
+                extra={"provider": "jsearch", "url": JSEARCH_API_URL},
+            )
             raise TemporaryJobDiscoveryError("Job discovery provider request failed.") from exc
         except httpx.HTTPStatusError as exc:
             status_code = exc.response.status_code
+            error_summary = _safe_error_body_summary(exc.response)
 
             if status_code in {401, 403}:
-                logger.warning("JSearch job search credentials were rejected.", extra={"status_code": status_code})
+                logger.warning(
+                    "JSearch job search credentials were rejected.",
+                    extra={"provider": "jsearch", "status_code": status_code, "response_summary": error_summary},
+                )
                 raise JobDiscoveryConfigurationError("JSearch API key is invalid.") from exc
 
             if status_code == 404:
-                logger.warning("JSearch endpoint was not found.")
+                logger.warning(
+                    "JSearch endpoint was not found.",
+                    extra={"provider": "jsearch", "status_code": status_code, "response_summary": error_summary},
+                )
                 raise TemporaryJobDiscoveryError("Job discovery provider endpoint was not found.") from exc
 
             if status_code == 429 or status_code >= 500:
-                logger.warning("JSearch job search returned temporary status.", extra={"status_code": status_code})
+                logger.warning(
+                    "JSearch job search returned temporary status.",
+                    extra={"provider": "jsearch", "status_code": status_code, "response_summary": error_summary},
+                )
                 raise TemporaryJobDiscoveryError("Job discovery provider is unavailable.") from exc
 
-            logger.error("JSearch job search returned non-retryable status.", extra={"status_code": status_code})
+            logger.error(
+                "JSearch job search returned non-retryable status.",
+                extra={"provider": "jsearch", "status_code": status_code, "response_summary": error_summary},
+            )
             raise RuntimeError("Unable to search jobs.") from exc
 
         normalized_jobs: list[ExternalJobPosting] = []

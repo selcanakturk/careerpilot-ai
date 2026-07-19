@@ -15,6 +15,10 @@ class TargetRoleRequiredError(ValueError):
     """Raised when job discovery has no query or career context."""
 
 
+class SelectedAnalysisNotFoundError(ValueError):
+    """Raised when a requested completed analysis cannot be used."""
+
+
 @dataclass(frozen=True)
 class JobSearchContext:
     resolved_query: str
@@ -23,6 +27,7 @@ class JobSearchContext:
     analysis_id: str | None
     queries_used: list[str]
     career_profile: career_profile_service.CareerProfile | None = None
+    selected_analysis_id: str | None = None
 
 
 def _to_response_career_profile(
@@ -95,21 +100,30 @@ def resolve_job_search_context(
     user_id: str,
     query: str | None,
     location: str | None,
+    analysis_id: str | None = None,
 ) -> JobSearchContext:
     normalized_query = query.strip() if query else ""
     normalized_location = location.strip() if location and location.strip() else None
+    normalized_analysis_id = analysis_id.strip() if analysis_id and analysis_id.strip() else None
 
     if normalized_query:
         return JobSearchContext(
             resolved_query=normalized_query,
             resolved_location=normalized_location,
             profile_used=False,
-            analysis_id=None,
+            analysis_id=normalized_analysis_id,
             queries_used=[normalized_query],
             career_profile=None,
+            selected_analysis_id=normalized_analysis_id,
         )
 
-    profile = career_profile_service.get_latest_career_profile(user_id)
+    if normalized_analysis_id:
+        profile = career_profile_service.get_career_profile_for_analysis(user_id, normalized_analysis_id)
+
+        if profile is None:
+            raise SelectedAnalysisNotFoundError("Selected completed analysis was not found.")
+    else:
+        profile = career_profile_service.get_latest_career_profile(user_id)
 
     if profile is not None:
         queries_used = career_profile_service.generate_search_queries(profile)
@@ -121,6 +135,7 @@ def resolve_job_search_context(
             analysis_id=profile.analysis_id,
             queries_used=queries_used,
             career_profile=profile,
+            selected_analysis_id=normalized_analysis_id,
         )
 
     raise TargetRoleRequiredError("A target role is required to discover jobs.")
@@ -135,17 +150,39 @@ def resolve_job_search_query(user_id: str, query: str | None) -> str:
     return context.resolved_query
 
 
+def _empty_discovery_response(
+    *,
+    context: JobSearchContext,
+    page: int,
+    results_per_page: int,
+    provider_unavailable: bool,
+) -> JobSearchResponse:
+    return JobSearchResponse(
+        jobs=[],
+        page=page,
+        results_per_page=results_per_page,
+        total_results=0,
+        query=context.resolved_query,
+        location=context.resolved_location,
+        providers_used=[],
+        providers_failed=[],
+        provider_unavailable=provider_unavailable,
+    )
+
+
 def discover_jobs(
     user_id: str,
     query: str | None,
     location: str | None,
     page: int,
     results_per_page: int,
+    analysis_id: str | None = None,
 ) -> JobSearchResponse:
     context = resolve_job_search_context(
         user_id=user_id,
         query=query,
         location=location,
+        analysis_id=analysis_id,
     )
     logger.info(
         "Job discovery context resolved.",
@@ -169,15 +206,11 @@ def discover_jobs(
             )
         except TemporaryJobDiscoveryError:
             logger.warning("Personalized job providers are temporarily unavailable; returning empty results.")
-            response = JobSearchResponse(
-                jobs=[],
+            response = _empty_discovery_response(
+                context=context,
                 page=page,
                 results_per_page=results_per_page,
-                total_results=0,
-                query=context.resolved_query,
-                location=context.resolved_location,
-                providers_used=[],
-                providers_failed=[],
+                provider_unavailable=True,
             )
         if context.career_profile is not None:
             scored_jobs = _score_jobs(response.jobs, context.career_profile)
@@ -189,12 +222,45 @@ def discover_jobs(
                 }
             )
     else:
-        response = search_all_providers(
-            query=context.resolved_query,
-            location=context.resolved_location,
-            page=page,
-            results_per_page=results_per_page,
-        )
+        selected_profile = None
+
+        if context.selected_analysis_id:
+            selected_profile = career_profile_service.get_career_profile_for_analysis(
+                user_id=user_id,
+                analysis_id=context.selected_analysis_id,
+            )
+
+            if selected_profile is None:
+                raise SelectedAnalysisNotFoundError("Selected completed analysis was not found.")
+
+        try:
+            response = search_all_providers(
+                query=context.resolved_query,
+                location=context.resolved_location,
+                page=page,
+                results_per_page=results_per_page,
+            )
+        except TemporaryJobDiscoveryError:
+            logger.warning("Manual job providers are temporarily unavailable; returning empty results.")
+            response = _empty_discovery_response(
+                context=context,
+                page=page,
+                results_per_page=results_per_page,
+                provider_unavailable=True,
+            )
+
+        if selected_profile is not None:
+            scored_jobs = _score_jobs(response.jobs, selected_profile)
+            response = response.model_copy(update={"jobs": scored_jobs})
+            context = JobSearchContext(
+                resolved_query=context.resolved_query,
+                resolved_location=context.resolved_location,
+                profile_used=context.profile_used,
+                analysis_id=selected_profile.analysis_id,
+                queries_used=context.queries_used,
+                career_profile=None,
+                selected_analysis_id=context.selected_analysis_id,
+            )
 
     logger.info(
         "Job discovery response prepared.",

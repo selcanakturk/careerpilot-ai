@@ -115,13 +115,16 @@ def search_all_providers(
     if not registrations:
         raise JobDiscoveryConfigurationError("No configured job discovery providers are available.")
 
-    all_jobs: list[ExternalJobPosting] = []
     providers_used: list[str] = []
     providers_failed: list[str] = []
-    total_results = 0
-    has_total_results = False
+    empty_success_response: JobSearchResponse | None = None
 
     for registration in registrations:
+        logger.info(
+            "Trying job provider.",
+            extra={"provider": registration.name, "query": query, "location": location},
+        )
+
         try:
             result = registration.provider.search_jobs(
                 query=query,
@@ -139,7 +142,6 @@ def search_all_providers(
             continue
 
         providers_used.append(registration.name)
-        all_jobs.extend(result.jobs)
         logger.info(
             "Job provider result received.",
             extra={
@@ -151,31 +153,41 @@ def search_all_providers(
             },
         )
 
-        if result.total_results is not None:
-            total_results += result.total_results
-            has_total_results = True
+        if result.jobs:
+            deduped_jobs = _dedupe_jobs(result.jobs)
+            logger.info(
+                "Job provider selected.",
+                extra={
+                    "provider": registration.name,
+                    "query": query,
+                    "location": location,
+                    "raw_jobs": len(result.jobs),
+                    "deduped_jobs": len(deduped_jobs),
+                    "providers_failed": providers_failed,
+                },
+            )
+            return JobSearchResponse(
+                jobs=deduped_jobs,
+                page=page,
+                results_per_page=results_per_page,
+                total_results=result.total_results,
+                query=query,
+                location=location,
+                providers_used=[registration.name],
+                providers_failed=providers_failed,
+            )
 
-    if not providers_used:
+        if empty_success_response is None:
+            empty_success_response = result
+
+    if empty_success_response is None:
         raise TemporaryJobDiscoveryError("All job discovery providers failed.")
 
-    deduped_jobs = _dedupe_jobs(all_jobs)
-    logger.info(
-        "Job aggregation completed.",
-        extra={
-            "query": query,
-            "location": location,
-            "raw_jobs": len(all_jobs),
-            "deduped_jobs": len(deduped_jobs),
-            "providers_used": providers_used,
-            "providers_failed": providers_failed,
-        },
-    )
-
     return JobSearchResponse(
-        jobs=deduped_jobs,
+        jobs=[],
         page=page,
         results_per_page=results_per_page,
-        total_results=total_results if has_total_results else None,
+        total_results=empty_success_response.total_results,
         query=query,
         location=location,
         providers_used=providers_used,
@@ -205,14 +217,23 @@ def search_all_provider_queries(
     if not registrations:
         raise JobDiscoveryConfigurationError("No configured job discovery providers are available.")
 
-    all_jobs: list[ExternalJobPosting] = []
     providers_used: list[str] = []
     providers_failed: list[str] = []
-    total_results = 0
-    has_total_results = False
+    empty_provider_used: list[str] = []
+    empty_success_response: JobSearchResponse | None = None
 
-    for query in normalized_queries:
-        for registration in registrations:
+    for registration in registrations:
+        provider_jobs: list[ExternalJobPosting] = []
+        provider_total_results = 0
+        provider_has_total_results = False
+        provider_had_success = False
+
+        logger.info(
+            "Trying job provider for multi-query search.",
+            extra={"provider": registration.name, "queries": normalized_queries, "location": location},
+        )
+
+        for query in normalized_queries:
             try:
                 result = registration.provider.search_jobs(
                     query=query,
@@ -229,8 +250,8 @@ def search_all_provider_queries(
                 logger.exception("Job discovery provider failed unexpectedly.", extra={"provider": registration.name})
                 continue
 
-            _append_unique(providers_used, registration.name)
-            all_jobs.extend(result.jobs)
+            provider_had_success = True
+            provider_jobs.extend(result.jobs)
             logger.info(
                 "Job provider query result received.",
                 extra={
@@ -243,32 +264,51 @@ def search_all_provider_queries(
             )
 
             if result.total_results is not None:
-                total_results += result.total_results
-                has_total_results = True
+                provider_total_results += result.total_results
+                provider_has_total_results = True
 
-    if not providers_used:
+            if empty_success_response is None:
+                empty_success_response = result
+
+        if not provider_had_success:
+            continue
+
+        _append_unique(empty_provider_used, registration.name)
+
+        if provider_jobs:
+            deduped_jobs = _dedupe_jobs_preserving_order(provider_jobs)
+            logger.info(
+                "Multi-query job provider selected.",
+                extra={
+                    "provider": registration.name,
+                    "queries": normalized_queries,
+                    "location": location,
+                    "raw_jobs": len(provider_jobs),
+                    "deduped_jobs": len(deduped_jobs),
+                    "providers_failed": providers_failed,
+                },
+            )
+            return JobSearchResponse(
+                jobs=deduped_jobs,
+                page=page,
+                results_per_page=results_per_page,
+                total_results=provider_total_results if provider_has_total_results else None,
+                query=normalized_queries[0],
+                location=location,
+                providers_used=[registration.name],
+                providers_failed=providers_failed,
+            )
+
+    if empty_success_response is None:
         raise TemporaryJobDiscoveryError("All job discovery providers failed.")
 
-    deduped_jobs = _dedupe_jobs_preserving_order(all_jobs)
-    logger.info(
-        "Multi-query job aggregation completed.",
-        extra={
-            "queries": normalized_queries,
-            "location": location,
-            "raw_jobs": len(all_jobs),
-            "deduped_jobs": len(deduped_jobs),
-            "providers_used": providers_used,
-            "providers_failed": providers_failed,
-        },
-    )
-
     return JobSearchResponse(
-        jobs=deduped_jobs,
+        jobs=[],
         page=page,
         results_per_page=results_per_page,
-        total_results=total_results if has_total_results else None,
+        total_results=empty_success_response.total_results,
         query=normalized_queries[0],
         location=location,
-        providers_used=providers_used,
+        providers_used=empty_provider_used,
         providers_failed=providers_failed,
     )

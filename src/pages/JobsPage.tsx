@@ -6,8 +6,10 @@ import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
 import Input from '../components/ui/Input';
 import Textarea from '../components/ui/Textarea';
-import { createJobPosting, discoverJobs, listJobPostings } from '../services/jobService';
+import { useAuth } from '../hooks/useAuth';
+import { createJobPosting, discoverJobs, listCompletedAnalyses, listJobPostings } from '../services/jobService';
 import type {
+  CompletedAnalysisOption,
   CreateJobPostingInput,
   EmploymentType,
   ExternalJobPosting,
@@ -17,6 +19,7 @@ import type {
 } from '../types/job';
 
 const RESULTS_PER_PAGE = 10;
+const SELECTED_ANALYSIS_STORAGE_PREFIX = 'careerpilot:selected-analysis:';
 
 const employmentTypeOptions: Array<{ label: string; value: EmploymentType }> = [
   { label: 'Full-time', value: 'full_time' },
@@ -60,6 +63,10 @@ function formatDate(value: string | null) {
     month: 'short',
     year: 'numeric',
   }).format(new Date(value));
+}
+
+function formatAnalysisOption(option: CompletedAnalysisOption) {
+  return `${option.filename} - ${option.target_role} - ${option.overall_score}% - ${formatDate(option.analyzed_at)}`;
 }
 
 function formatOption(value: string | null) {
@@ -126,16 +133,22 @@ function mapExternalJobToInput(job: ExternalJobPosting): CreateJobPostingInput {
 }
 
 export default function JobsPage() {
+  const { user } = useAuth();
   const [jobs, setJobs] = useState<JobPosting[]>([]);
   const [recommendedJobs, setRecommendedJobs] = useState<ExternalJobPosting[]>([]);
+  const [analysisOptions, setAnalysisOptions] = useState<CompletedAnalysisOption[]>([]);
+  const [selectedAnalysisId, setSelectedAnalysisId] = useState('');
   const [form, setForm] = useState<CreateJobPostingInput>(initialForm);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isLoadingSavedJobs, setIsLoadingSavedJobs] = useState(true);
+  const [isLoadingAnalyses, setIsLoadingAnalyses] = useState(true);
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [savingExternalId, setSavingExternalId] = useState<string | null>(null);
   const [savedJobsError, setSavedJobsError] = useState('');
+  const [analysisOptionsError, setAnalysisOptionsError] = useState('');
   const [discoveryError, setDiscoveryError] = useState('');
+  const [providerUnavailable, setProviderUnavailable] = useState(false);
   const [formError, setFormError] = useState('');
   const [saveMessage, setSaveMessage] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -150,20 +163,31 @@ export default function JobsPage() {
     careerProfile: null,
   });
 
-  const runDiscovery = async (page: number, query = searchQuery, location = searchLocation) => {
+  const runDiscovery = async (
+    page: number,
+    query = searchQuery,
+    location = searchLocation,
+    analysisId = selectedAnalysisId,
+  ) => {
     setIsDiscovering(true);
     setDiscoveryError('');
+    setProviderUnavailable(false);
+
+    const trimmedQuery = query.trim();
+    const trimmedLocation = location.trim();
 
     try {
       const result = await discoverJobs({
-        query,
-        location,
+        query: trimmedQuery,
+        location: trimmedLocation,
+        analysisId,
         page,
         resultsPerPage: RESULTS_PER_PAGE,
       });
       setRecommendedJobs(result.jobs);
       setCurrentPage(result.page);
       setTotalResults(result.total_results);
+      setProviderUnavailable(result.provider_unavailable === true);
       setRecommendationContext({
         profileUsed: result.profile_used === true,
         analysisId: result.analysis_id ?? null,
@@ -173,6 +197,7 @@ export default function JobsPage() {
       });
     } catch (discoverError) {
       setRecommendedJobs([]);
+      setProviderUnavailable(false);
       setRecommendationContext({
         profileUsed: false,
         analysisId: null,
@@ -195,38 +220,74 @@ export default function JobsPage() {
 
     const loadJobs = async () => {
       setIsLoadingSavedJobs(true);
+      setIsLoadingAnalyses(true);
       setSavedJobsError('');
+      setAnalysisOptionsError('');
 
-      try {
-        const savedJobs = await listJobPostings();
+      const [savedJobsResult, completedAnalysesResult] = await Promise.allSettled([
+        listJobPostings(),
+        listCompletedAnalyses(),
+      ]);
 
-        if (isMounted) {
-          setJobs(savedJobs);
-        }
-      } catch {
-        if (isMounted) {
+      if (isMounted) {
+        if (savedJobsResult.status === 'fulfilled') {
+          setJobs(savedJobsResult.value);
+        } else {
           setSavedJobsError('Unable to load saved jobs.');
         }
-      } finally {
-        if (isMounted) {
-          setIsLoadingSavedJobs(false);
+
+        if (completedAnalysesResult.status === 'fulfilled') {
+          const completedAnalyses = completedAnalysesResult.value;
+          setAnalysisOptions(completedAnalyses);
+
+          const storageKey = user?.id ? `${SELECTED_ANALYSIS_STORAGE_PREFIX}${user.id}` : '';
+          const storedAnalysisId = storageKey ? localStorage.getItem(storageKey) : null;
+          const nextSelectedAnalysisId =
+            completedAnalyses.find((analysis) => analysis.analysis_id === storedAnalysisId)?.analysis_id ??
+            completedAnalyses[0]?.analysis_id ??
+            '';
+
+          setSelectedAnalysisId(nextSelectedAnalysisId);
+          void runDiscovery(1, '', '', nextSelectedAnalysisId);
+        } else {
+          setAnalysisOptionsError('Unable to load completed CV analyses.');
+          void runDiscovery(1, '', '', '');
         }
+      }
+
+      if (isMounted) {
+        setIsLoadingSavedJobs(false);
+        setIsLoadingAnalyses(false);
       }
     };
 
     void loadJobs();
-    void runDiscovery(1, '', '');
 
     return () => {
       isMounted = false;
     };
     // Initial discovery intentionally uses backend career context when available.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [user?.id]);
 
   const handleSearch = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    void runDiscovery(1);
+    const trimmedQuery = searchQuery.trim();
+    const trimmedLocation = searchLocation.trim();
+
+    setSearchQuery(trimmedQuery);
+    setSearchLocation(trimmedLocation);
+    void runDiscovery(1, trimmedQuery, trimmedLocation, selectedAnalysisId);
+  };
+
+  const handleSelectedAnalysisChange = (analysisId: string) => {
+    setSelectedAnalysisId(analysisId);
+
+    if (user?.id) {
+      localStorage.setItem(`${SELECTED_ANALYSIS_STORAGE_PREFIX}${user.id}`, analysisId);
+    }
+
+    void runDiscovery(1, searchQuery, searchLocation, analysisId);
   };
 
   const handleSaveExternalJob = async (job: ExternalJobPosting) => {
@@ -293,6 +354,42 @@ export default function JobsPage() {
           </p>
         </div>
       </section>
+
+      <Card className="p-6">
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,420px)] lg:items-end">
+          <div>
+            <p className="text-sm font-bold text-brand-700">Using CV</p>
+            <h2 className="mt-1 text-xl font-bold tracking-tight text-slate-950">Select the CV analysis for jobs</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              Recommendations and match scores are based on this CV.
+            </p>
+            {analysisOptionsError && (
+              <p className="mt-2 text-sm font-semibold text-rose-700">{analysisOptionsError}</p>
+            )}
+          </div>
+          <label className="block text-sm font-medium text-slate-700">
+            <span className="mb-2 block">Completed CV analysis</span>
+            <select
+              className="min-h-11 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition hover:border-slate-300 focus:border-brand-500 focus:ring-4 focus:ring-brand-100"
+              value={selectedAnalysisId}
+              onChange={(event) => handleSelectedAnalysisChange(event.target.value)}
+              disabled={isLoadingAnalyses || isDiscovering || analysisOptions.length === 0}
+            >
+              {analysisOptions.length === 0 ? (
+                <option value="">
+                  {isLoadingAnalyses ? 'Loading completed analyses...' : 'No completed analyses available'}
+                </option>
+              ) : (
+                analysisOptions.map((analysis) => (
+                  <option key={analysis.analysis_id} value={analysis.analysis_id}>
+                    {formatAnalysisOption(analysis)}
+                  </option>
+                ))
+              )}
+            </select>
+          </label>
+        </div>
+      </Card>
 
       {showCareerProfile && (
         <Card className="p-6">
@@ -407,14 +504,24 @@ export default function JobsPage() {
           </Card>
         ) : discoveryError ? (
           <Card className="p-6 text-sm text-rose-700">{discoveryError}</Card>
+        ) : providerUnavailable ? (
+          <Card className="border-amber-200 bg-amber-50 p-8 text-center">
+            <BriefcaseBusiness className="mx-auto size-10 text-amber-700" />
+            <h2 className="mt-4 text-2xl font-bold tracking-tight text-slate-950">
+              Job listings are temporarily unavailable.
+            </h2>
+            <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-slate-700">
+              Please try again shortly.
+            </p>
+          </Card>
         ) : recommendedJobs.length === 0 ? (
           <Card className="p-8 text-center">
             <BriefcaseBusiness className="mx-auto size-10 text-brand-700" />
             <h2 className="mt-4 text-2xl font-bold tracking-tight text-slate-950">
-              No matching jobs were found right now.
+              No matching jobs were found.
             </h2>
             <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-slate-600">
-              Try refining your search or adjusting your filters.
+              Try another role or location.
             </p>
           </Card>
         ) : (

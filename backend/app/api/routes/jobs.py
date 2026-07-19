@@ -4,7 +4,13 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.security import CurrentUser, get_current_user
-from app.schemas.job import CreateJobPostingRequest, JobMatchResponse, JobPostingResponse, JobSearchResponse
+from app.schemas.job import (
+    CompletedAnalysisOptionsResponse,
+    CreateJobPostingRequest,
+    JobMatchResponse,
+    JobPostingResponse,
+    JobSearchResponse,
+)
 from app.services import job_discovery_service, job_service
 from app.services.ai import ai_service
 from app.services.ai.providers.gemini_provider import TemporaryAIServiceError
@@ -53,6 +59,7 @@ def list_job_postings(
 def discover_jobs(
     query: str | None = None,
     location: str | None = None,
+    analysis_id: UUID | None = None,
     page: int = Query(default=1, ge=1),
     results_per_page: int = Query(default=20, ge=1, le=50),
     current_user: CurrentUser = Depends(get_current_user),
@@ -62,6 +69,7 @@ def discover_jobs(
             user_id=current_user.id,
             query=query,
             location=location,
+            analysis_id=str(analysis_id) if analysis_id else None,
             page=page,
             results_per_page=results_per_page,
         )
@@ -69,6 +77,11 @@ def discover_jobs(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="A target role is required to discover jobs.",
+        ) from exc
+    except job_discovery_service.SelectedAnalysisNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Selected CV analysis not found.",
         ) from exc
     except JobDiscoveryConfigurationError as exc:
         raise HTTPException(
@@ -85,6 +98,22 @@ def discover_jobs(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Unable to discover jobs.",
+        )
+
+
+@router.get("/cv-options", response_model=CompletedAnalysisOptionsResponse)
+def list_completed_cv_options(
+    current_user: CurrentUser = Depends(get_current_user),
+) -> CompletedAnalysisOptionsResponse:
+    try:
+        return CompletedAnalysisOptionsResponse(
+            items=job_service.list_completed_analysis_options(user_id=current_user.id)
+        )
+    except Exception:
+        logger.exception("Unable to list completed CV analysis options.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to load completed CV analyses.",
         )
 
 

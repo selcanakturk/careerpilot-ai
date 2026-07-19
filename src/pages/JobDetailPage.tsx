@@ -3,6 +3,7 @@ import { ArrowLeft, ExternalLink, Gauge } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
+import { useAuth } from '../hooks/useAuth';
 import {
   generateJobMatch,
   getJobPosting,
@@ -10,8 +11,26 @@ import {
 } from '../services/jobService';
 import type { CompletedAnalysisOption, JobMatch, JobPosting } from '../types/job';
 
+const SELECTED_ANALYSIS_STORAGE_PREFIX = 'careerpilot:selected-analysis:';
+
 function formatOption(value: string | null) {
   return value ? value.replace(/_/g, ' ') : 'Not specified';
+}
+
+function formatDate(value: string | null) {
+  if (!value) {
+    return 'Date not available';
+  }
+
+  return new Intl.DateTimeFormat('en', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  }).format(new Date(value));
+}
+
+function formatAnalysisOption(option: CompletedAnalysisOption) {
+  return `${option.filename} - ${option.target_role} - ${option.overall_score}% - ${formatDate(option.analyzed_at)}`;
 }
 
 function readinessLabel(value: string) {
@@ -36,6 +55,7 @@ function SkillList({ items }: { items: string[] }) {
 
 export default function JobDetailPage() {
   const { jobPostingId } = useParams();
+  const { user } = useAuth();
   const [job, setJob] = useState<JobPosting | null>(null);
   const [analyses, setAnalyses] = useState<CompletedAnalysisOption[]>([]);
   const [selectedAnalysisId, setSelectedAnalysisId] = useState('');
@@ -67,7 +87,14 @@ export default function JobDetailPage() {
         if (isMounted) {
           setJob(jobPosting);
           setAnalyses(completedAnalyses);
-          setSelectedAnalysisId(completedAnalyses[0]?.id ?? '');
+          const storageKey = user?.id ? `${SELECTED_ANALYSIS_STORAGE_PREFIX}${user.id}` : '';
+          const storedAnalysisId = storageKey ? localStorage.getItem(storageKey) : null;
+          const nextSelectedAnalysisId =
+            completedAnalyses.find((analysis) => analysis.analysis_id === storedAnalysisId)?.analysis_id ??
+            completedAnalyses[0]?.analysis_id ??
+            '';
+
+          setSelectedAnalysisId(nextSelectedAnalysisId);
         }
       } catch (loadError) {
         if (isMounted) {
@@ -85,7 +112,7 @@ export default function JobDetailPage() {
     return () => {
       isMounted = false;
     };
-  }, [jobPostingId]);
+  }, [jobPostingId, user?.id]);
 
   const handleGenerateMatch = async () => {
     if (!job || !selectedAnalysisId || isAnalyzing) {
@@ -177,14 +204,21 @@ export default function JobDetailPage() {
               <select
                 className="min-h-11 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition hover:border-slate-300 focus:border-brand-500 focus:ring-4 focus:ring-brand-100"
                 value={selectedAnalysisId}
-                onChange={(event) => setSelectedAnalysisId(event.target.value)}
+                onChange={(event) => {
+                  const nextAnalysisId = event.target.value;
+                  setSelectedAnalysisId(nextAnalysisId);
+
+                  if (user?.id) {
+                    localStorage.setItem(`${SELECTED_ANALYSIS_STORAGE_PREFIX}${user.id}`, nextAnalysisId);
+                  }
+                }}
               >
                 {analyses.length === 0 ? (
                   <option value="">No completed analyses available</option>
                 ) : (
                   analyses.map((analysis) => (
-                    <option key={analysis.id} value={analysis.id}>
-                      {analysis.target_role}
+                    <option key={analysis.analysis_id} value={analysis.analysis_id}>
+                      {formatAnalysisOption(analysis)}
                     </option>
                   ))
                 )}

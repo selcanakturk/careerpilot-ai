@@ -166,6 +166,22 @@ def _get_latest_completed_analysis(user_id: str) -> dict[str, object] | None:
     return data if isinstance(data, dict) else None
 
 
+def _get_completed_analysis_by_id(user_id: str, analysis_id: str) -> dict[str, object] | None:
+    response = (
+        get_supabase_client()
+        .table(ANALYSES_TABLE)
+        .select("*")
+        .eq("id", analysis_id)
+        .eq("user_id", user_id)
+        .eq("status", "completed")
+        .limit(1)
+        .execute()
+    )
+
+    data = _extract_response_data(response, "select selected completed analysis")
+    return data if isinstance(data, dict) else None
+
+
 def _get_upload_experience_level(cv_upload_id: object, user_id: str) -> str:
     if not isinstance(cv_upload_id, str) or not cv_upload_id.strip():
         return DEFAULT_EXPERIENCE_LEVEL
@@ -248,4 +264,27 @@ def get_latest_career_profile(user_id: str) -> CareerProfile | None:
         return _build_career_profile(analysis, experience_level)
     except Exception:
         logger.exception("Unable to build latest career profile.")
+        return None
+
+
+def get_career_profile_for_analysis(user_id: str, analysis_id: str) -> CareerProfile | None:
+    try:
+        normalized_user_id = user_id.strip()
+        normalized_analysis_id = analysis_id.strip()
+
+        if not normalized_user_id or not normalized_analysis_id:
+            return None
+
+        analysis = _get_completed_analysis_by_id(normalized_user_id, normalized_analysis_id)
+
+        if analysis is None:
+            return None
+
+        experience_level = _get_upload_experience_level(
+            cv_upload_id=analysis.get("cv_upload_id"),
+            user_id=normalized_user_id,
+        )
+        return _build_career_profile(analysis, experience_level)
+    except Exception:
+        logger.exception("Unable to build selected career profile.")
         return None

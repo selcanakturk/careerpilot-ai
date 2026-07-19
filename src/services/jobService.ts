@@ -1,7 +1,7 @@
-import { supabase } from '../lib/supabase';
 import { ApiError, apiRequest } from './apiService';
 import type {
   CompletedAnalysisOption,
+  CompletedAnalysisOptionsResponse,
   CreateJobPostingInput,
   JobMatch,
   JobPosting,
@@ -11,6 +11,7 @@ import type {
 type DiscoverJobsInput = {
   query?: string;
   location?: string;
+  analysisId?: string;
   page?: number;
   resultsPerPage?: number;
 };
@@ -68,6 +69,7 @@ export async function listJobPostings(): Promise<JobPosting[]> {
 export async function discoverJobs({
   query,
   location,
+  analysisId,
   page = 1,
   resultsPerPage = 20,
 }: DiscoverJobsInput = {}): Promise<JobSearchResponse> {
@@ -84,11 +86,16 @@ export async function discoverJobs({
     params.set('location', location.trim());
   }
 
+  if (analysisId?.trim()) {
+    params.set('analysis_id', analysisId.trim());
+  }
+
   try {
     if (import.meta.env.DEV) {
       console.info('Job discovery request', {
         hasQuery: Boolean(query?.trim()),
         hasLocation: Boolean(location?.trim()),
+        hasAnalysisId: Boolean(analysisId?.trim()),
         page,
         resultsPerPage,
       });
@@ -145,23 +152,10 @@ export async function generateJobMatch(jobPostingId: string, analysisId: string)
 }
 
 export async function listCompletedAnalyses(): Promise<CompletedAnalysisOption[]> {
-  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-
-  if (sessionError || !sessionData.session?.user.id) {
-    throw new Error('Your session has expired. Please sign in again.');
+  try {
+    const response = await apiRequest<CompletedAnalysisOptionsResponse>('/api/jobs/cv-options');
+    return response.items;
+  } catch (error) {
+    throw normalizeJobError(error);
   }
-
-  const { data, error } = await supabase
-    .from('cv_analyses')
-    .select('id,target_role,created_at')
-    .eq('user_id', sessionData.session.user.id)
-    .eq('status', 'completed')
-    .order('created_at', { ascending: false })
-    .returns<CompletedAnalysisOption[]>();
-
-  if (error) {
-    throw new Error('Unable to load completed CV analyses.');
-  }
-
-  return data ?? [];
 }

@@ -61,6 +61,8 @@ export type JobSearchResponse = {
   resolved_query?: string | null;
   resolved_location?: string | null;
   career_profile?: JobSearchCareerProfile | null;
+  queries_used?: string[];
+  provider_unavailable?: boolean;
 };
 
 export type CreateJobPostingInput = {
@@ -91,7 +93,14 @@ export type JobMatch = {
 };
 
 export type CompletedAnalysisOption = {
-  id: string;
+  upload_id: string;
+  analysis_id: string;
+  filename: string;
+  analyzed_at: string;
   target_role: string;
-  created_at: string;
+  overall_score: number;
+};
+
+export type CompletedAnalysisOptionsResponse = {
+  items: CompletedAnalysisOption[];
 };

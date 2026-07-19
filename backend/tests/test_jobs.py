@@ -347,6 +347,29 @@ def test_discover_jobs_provider_temporary_error_returns_503(monkeypatch) -> None
     assert response.json()["detail"] == "The job discovery service is temporarily unavailable. Please try again shortly."
 
 
+def test_discover_jobs_manual_provider_temporary_error_returns_empty_response(monkeypatch) -> None:
+    monkeypatch.setattr(
+        job_discovery_service,
+        "search_all_providers",
+        lambda **_kwargs: (_ for _ in ()).throw(TemporaryJobDiscoveryError("rate limited")),
+    )
+
+    result = job_discovery_service.discover_jobs(
+        user_id=OWNER_ID,
+        query=" Software Engineer ",
+        location=None,
+        page=1,
+        results_per_page=10,
+    )
+
+    assert result.jobs == []
+    assert result.total_results == 0
+    assert result.profile_used is False
+    assert result.resolved_query == "Software Engineer"
+    assert result.queries_used == ["Software Engineer"]
+    assert result.provider_unavailable is True
+
+
 def test_discover_jobs_missing_config_returns_503(monkeypatch) -> None:
     monkeypatch.setattr(
         job_discovery_service,
@@ -596,6 +619,166 @@ def test_discovery_service_profile_provider_temporary_error_returns_empty_respon
     assert str(result.analysis_id) == analysis_id
     assert result.resolved_query == "Backend Software Engineer"
     assert result.resolved_location == "Turkey"
+    assert result.provider_unavailable is True
+
+
+def test_discovery_service_real_empty_result_is_not_provider_unavailable(monkeypatch) -> None:
+    monkeypatch.setattr(
+        job_discovery_service,
+        "search_all_providers",
+        lambda **kwargs: JobSearchResponse(
+            jobs=[],
+            page=kwargs["page"],
+            results_per_page=kwargs["results_per_page"],
+            total_results=0,
+            query=kwargs["query"],
+            location=kwargs["location"],
+        ),
+    )
+
+    result = job_discovery_service.discover_jobs(
+        user_id=OWNER_ID,
+        query="Software Engineer",
+        location="Turkey",
+        page=1,
+        results_per_page=10,
+    )
+
+    assert result.jobs == []
+    assert result.total_results == 0
+    assert result.provider_unavailable is False
+
+
+def test_discovery_service_manual_search_uses_selected_analysis_for_match(monkeypatch) -> None:
+    analysis_id = str(uuid4())
+
+    monkeypatch.setattr(
+        career_profile_service,
+        "get_career_profile_for_analysis",
+        lambda **_kwargs: career_profile_service.CareerProfile(
+            user_id=OWNER_ID,
+            analysis_id=analysis_id,
+            primary_role="Backend Developer",
+            alternative_roles=[],
+            experience_level="mid",
+            skills=["Python", "FastAPI"],
+            strengths=["Python"],
+            weaknesses=[],
+            overall_score=84,
+            preferred_locations=["Turkey"],
+            remote_preference=None,
+        ),
+    )
+    monkeypatch.setattr(
+        job_discovery_service,
+        "search_all_providers",
+        lambda **kwargs: JobSearchResponse(
+            jobs=[
+                make_external_job(
+                    "python-job",
+                    "https://example.com/python-job",
+                    "Build APIs with Python and FastAPI.",
+                    title="Software Engineer",
+                )
+            ],
+            page=kwargs["page"],
+            results_per_page=kwargs["results_per_page"],
+            total_results=1,
+            query=kwargs["query"],
+            location=kwargs["location"],
+        ),
+    )
+
+    result = job_discovery_service.discover_jobs(
+        user_id=OWNER_ID,
+        query="Software Engineer",
+        location="Turkey",
+        analysis_id=analysis_id,
+        page=1,
+        results_per_page=10,
+    )
+
+    assert result.profile_used is False
+    assert str(result.analysis_id) == analysis_id
+    assert result.jobs[0].matched_skills == ["Python", "FastAPI"]
+    assert result.jobs[0].match_reasons
+
+
+def test_discovery_service_selected_analysis_not_found_raises_before_provider(monkeypatch) -> None:
+    provider_called = False
+
+    def search_all_providers(**_kwargs: object) -> JobSearchResponse:
+        nonlocal provider_called
+        provider_called = True
+        return JobSearchResponse(jobs=[], page=1, results_per_page=10, query="Software Engineer")
+
+    monkeypatch.setattr(career_profile_service, "get_career_profile_for_analysis", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(job_discovery_service, "search_all_providers", search_all_providers)
+
+    try:
+        job_discovery_service.discover_jobs(
+            user_id=OWNER_ID,
+            query="Software Engineer",
+            location=None,
+            analysis_id=str(uuid4()),
+            page=1,
+            results_per_page=10,
+        )
+    except job_discovery_service.SelectedAnalysisNotFoundError:
+        pass
+    else:
+        raise AssertionError("SelectedAnalysisNotFoundError was not raised.")
+
+    assert provider_called is False
+
+
+def test_list_completed_cv_options_returns_owner_items(monkeypatch) -> None:
+    analysis_id = str(uuid4())
+    upload_id = str(uuid4())
+
+    monkeypatch.setattr(
+        job_service,
+        "list_completed_analysis_options",
+        lambda **_kwargs: [
+            {
+                "upload_id": upload_id,
+                "analysis_id": analysis_id,
+                "filename": "selcan-backend-cv.pdf",
+                "analyzed_at": "2026-07-17T10:00:00Z",
+                "target_role": "Backend Developer",
+                "overall_score": 84,
+            }
+        ],
+    )
+    app.dependency_overrides[get_current_user] = override_current_user
+
+    try:
+        response = TestClient(app).get("/api/jobs/cv-options")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["analysis_id"] == analysis_id
+    assert response.json()["items"][0]["upload_id"] == upload_id
+
+
+def test_discover_jobs_selected_analysis_not_found_returns_404(monkeypatch) -> None:
+    monkeypatch.setattr(
+        job_discovery_service,
+        "discover_jobs",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            job_discovery_service.SelectedAnalysisNotFoundError("missing")
+        ),
+    )
+    app.dependency_overrides[get_current_user] = override_current_user
+
+    try:
+        response = TestClient(app).get(f"/api/jobs/discover?query=Software&analysis_id={uuid4()}")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Selected CV analysis not found."
 
 
 def test_discovery_service_profile_missing_keeps_target_role_error(monkeypatch) -> None:
@@ -644,7 +827,7 @@ def test_auto_mode_selects_only_configured_providers(monkeypatch) -> None:
     assert [registration.name for registration in registrations] == ["jooble"]
 
 
-def test_auto_mode_skips_unsupported_adzuna_country(monkeypatch) -> None:
+def test_auto_mode_keeps_configured_adzuna_with_market_fallback(monkeypatch) -> None:
     monkeypatch.setattr(
         provider_registry,
         "get_settings",
@@ -660,7 +843,8 @@ def test_auto_mode_skips_unsupported_adzuna_country(monkeypatch) -> None:
 
     registrations = provider_registry.select_provider_registrations()
 
-    assert registrations == []
+    assert [registration.name for registration in registrations] == ["adzuna"]
+    assert registrations[0].supported_countries == ("gb",)
 
 
 def test_explicit_adzuna_provider_option_still_works(monkeypatch) -> None:
@@ -722,7 +906,45 @@ def test_jsearch_has_highest_auto_priority(monkeypatch) -> None:
 
     registrations = provider_registry.select_provider_registrations()
 
-    assert [registration.name for registration in registrations] == ["jsearch", "jooble", "adzuna"]
+    assert [registration.name for registration in registrations] == ["jsearch", "adzuna", "jooble"]
+
+
+def test_explicit_jsearch_uses_configured_fallback_providers(monkeypatch) -> None:
+    monkeypatch.setattr(
+        provider_registry,
+        "get_settings",
+        lambda: SimpleNamespace(
+            job_discovery_provider="jsearch",
+            jsearch_api_key="jsearch-key",
+            jooble_api_key="jooble-key",
+            adzuna_app_id="app",
+            adzuna_app_key="key",
+            adzuna_country="gb",
+        ),
+    )
+
+    registrations = provider_registry.select_provider_registrations()
+
+    assert [registration.name for registration in registrations] == ["jsearch", "adzuna", "jooble"]
+
+
+def test_explicit_jooble_keeps_selected_provider_when_no_lower_priority_fallback_exists(monkeypatch) -> None:
+    monkeypatch.setattr(
+        provider_registry,
+        "get_settings",
+        lambda: SimpleNamespace(
+            job_discovery_provider="jooble",
+            jsearch_api_key="jsearch-key",
+            jooble_api_key="jooble-key",
+            adzuna_app_id="app",
+            adzuna_app_key="key",
+            adzuna_country="gb",
+        ),
+    )
+
+    registrations = provider_registry.select_provider_registrations()
+
+    assert [registration.name for registration in registrations] == ["jooble"]
 
 
 def test_explicit_jsearch_without_key_raises_config(monkeypatch) -> None:
@@ -778,6 +1000,162 @@ def test_aggregator_one_provider_fail_one_success_returns_success(monkeypatch) -
     assert len(result.jobs) == 1
     assert result.providers_used == ["adzuna"]
     assert result.providers_failed == ["jooble"]
+
+
+def test_aggregator_jsearch_429_falls_back_to_adzuna_and_stops(monkeypatch) -> None:
+    calls: list[str] = []
+
+    class RateLimitedProvider:
+        def search_jobs(self, **_kwargs: object) -> JobSearchResponse:
+            calls.append("jsearch")
+            raise TemporaryJobDiscoveryError("rate limit")
+
+    class SuccessfulProvider:
+        def search_jobs(self, query: str, location: str | None, page: int, results_per_page: int) -> JobSearchResponse:
+            calls.append("adzuna")
+            return JobSearchResponse(
+                jobs=[make_external_job("adzuna-1", "https://example.com/adzuna", source="adzuna")],
+                page=page,
+                results_per_page=results_per_page,
+                total_results=1,
+                query=query,
+                location=location,
+            )
+
+    class ShouldNotRunProvider:
+        def search_jobs(self, **_kwargs: object) -> JobSearchResponse:
+            calls.append("jooble")
+            return JobSearchResponse(jobs=[], page=1, results_per_page=10, query="unused")
+
+    monkeypatch.setattr(
+        job_aggregator,
+        "select_provider_registrations",
+        lambda: [
+            provider_registry.ProviderRegistration("jsearch", RateLimitedProvider(), True, 5, ("tr",)),
+            provider_registry.ProviderRegistration("adzuna", SuccessfulProvider(), True, 10, ("gb",)),
+            provider_registry.ProviderRegistration("jooble", ShouldNotRunProvider(), True, 20, ("tr",)),
+        ],
+    )
+
+    result = job_aggregator.search_all_providers("Backend Developer", "Turkey", 1, 10)
+
+    assert calls == ["jsearch", "adzuna"]
+    assert result.providers_used == ["adzuna"]
+    assert result.providers_failed == ["jsearch"]
+    assert len(result.jobs) == 1
+    assert result.jobs[0].source == "adzuna"
+
+
+def test_aggregator_adzuna_failure_falls_back_to_jooble(monkeypatch) -> None:
+    calls: list[str] = []
+
+    class FailingProvider:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def search_jobs(self, **_kwargs: object) -> JobSearchResponse:
+            calls.append(self.name)
+            raise TemporaryJobDiscoveryError("temporary")
+
+    class JoobleProvider:
+        def search_jobs(self, query: str, location: str | None, page: int, results_per_page: int) -> JobSearchResponse:
+            calls.append("jooble")
+            return JobSearchResponse(
+                jobs=[make_external_job("jooble-1", "https://example.com/jooble", source="jooble")],
+                page=page,
+                results_per_page=results_per_page,
+                total_results=1,
+                query=query,
+                location=location,
+            )
+
+    monkeypatch.setattr(
+        job_aggregator,
+        "select_provider_registrations",
+        lambda: [
+            provider_registry.ProviderRegistration("jsearch", FailingProvider("jsearch"), True, 5, ("tr",)),
+            provider_registry.ProviderRegistration("adzuna", FailingProvider("adzuna"), True, 10, ("gb",)),
+            provider_registry.ProviderRegistration("jooble", JoobleProvider(), True, 20, ("tr",)),
+        ],
+    )
+
+    result = job_aggregator.search_all_providers("Backend Developer", "Turkey", 1, 10)
+
+    assert calls == ["jsearch", "adzuna", "jooble"]
+    assert result.providers_used == ["jooble"]
+    assert result.providers_failed == ["jsearch", "adzuna"]
+    assert len(result.jobs) == 1
+
+
+def test_aggregator_empty_success_continues_to_next_provider(monkeypatch) -> None:
+    calls: list[str] = []
+
+    class EmptyProvider:
+        def search_jobs(self, query: str, location: str | None, page: int, results_per_page: int) -> JobSearchResponse:
+            calls.append("jsearch")
+            return JobSearchResponse(
+                jobs=[],
+                page=page,
+                results_per_page=results_per_page,
+                total_results=0,
+                query=query,
+                location=location,
+            )
+
+    class SuccessfulProvider:
+        def search_jobs(self, query: str, location: str | None, page: int, results_per_page: int) -> JobSearchResponse:
+            calls.append("adzuna")
+            return JobSearchResponse(
+                jobs=[make_external_job("adzuna-1", "https://example.com/adzuna", source="adzuna")],
+                page=page,
+                results_per_page=results_per_page,
+                total_results=1,
+                query=query,
+                location=location,
+            )
+
+    monkeypatch.setattr(
+        job_aggregator,
+        "select_provider_registrations",
+        lambda: [
+            provider_registry.ProviderRegistration("jsearch", EmptyProvider(), True, 5, ("tr",)),
+            provider_registry.ProviderRegistration("adzuna", SuccessfulProvider(), True, 10, ("gb",)),
+        ],
+    )
+
+    result = job_aggregator.search_all_providers("Backend Developer", "Turkey", 1, 10)
+
+    assert calls == ["jsearch", "adzuna"]
+    assert result.providers_used == ["adzuna"]
+    assert len(result.jobs) == 1
+
+
+def test_aggregator_all_successful_providers_empty_returns_available_empty_response(monkeypatch) -> None:
+    class EmptyProvider:
+        def search_jobs(self, query: str, location: str | None, page: int, results_per_page: int) -> JobSearchResponse:
+            return JobSearchResponse(
+                jobs=[],
+                page=page,
+                results_per_page=results_per_page,
+                total_results=0,
+                query=query,
+                location=location,
+            )
+
+    monkeypatch.setattr(
+        job_aggregator,
+        "select_provider_registrations",
+        lambda: [
+            provider_registry.ProviderRegistration("jsearch", EmptyProvider(), True, 5, ("tr",)),
+            provider_registry.ProviderRegistration("adzuna", EmptyProvider(), True, 10, ("gb",)),
+        ],
+    )
+
+    result = job_aggregator.search_all_providers("Backend Developer", "Turkey", 1, 10)
+
+    assert result.jobs == []
+    assert result.providers_used == ["jsearch", "adzuna"]
+    assert result.providers_failed == []
 
 
 def test_aggregator_all_providers_fail_returns_temporary(monkeypatch) -> None:
@@ -1698,6 +2076,41 @@ def test_adzuna_provider_normalizes_and_deduplicates(monkeypatch) -> None:
     assert len(result.jobs) == 1
     assert result.jobs[0].external_id == "external-1"
     assert result.jobs[0].work_mode == "remote"
+
+
+def test_adzuna_provider_uses_gb_market_when_country_unsupported(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {"results": [], "count": 0}
+
+    class FakeClient:
+        def get(self, url: str, params: dict[str, object]) -> FakeResponse:
+            captured["url"] = url
+            captured["params"] = params
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        adzuna_provider,
+        "get_settings",
+        lambda: SimpleNamespace(adzuna_app_id="app", adzuna_app_key="key", adzuna_country="tr"),
+    )
+
+    result = adzuna_provider.AdzunaJobProvider(client=FakeClient()).search_jobs(
+        query="Software Engineer",
+        location="Turkey",
+        page=1,
+        results_per_page=10,
+    )
+
+    assert captured["url"] == "https://api.adzuna.com/v1/api/jobs/gb/search/1"
+    assert captured["params"]["what"] == "Software Engineer"
+    assert captured["params"]["where"] == "Turkey"
+    assert result.jobs == []
 
 
 def test_adzuna_provider_missing_config_raises(monkeypatch) -> None:

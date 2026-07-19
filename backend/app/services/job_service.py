@@ -11,6 +11,7 @@ JOB_POSTINGS_TABLE = "job_postings"
 JOB_MATCHES_TABLE = "job_matches"
 ANALYSES_TABLE = "cv_analyses"
 ROADMAPS_TABLE = "career_roadmaps"
+UPLOADS_TABLE = "cv_uploads"
 
 
 def _now_iso() -> str:
@@ -225,6 +226,68 @@ def get_latest_analysis_target_role(user_id: str) -> str | None:
 
     target_role = analysis.get("target_role")
     return target_role if isinstance(target_role, str) and target_role.strip() else None
+
+
+def list_completed_analysis_options(user_id: str) -> list[dict[str, object]]:
+    try:
+        analyses_response = (
+            get_supabase_client()
+            .table(ANALYSES_TABLE)
+            .select("id,cv_upload_id,target_role,overall_score,created_at")
+            .eq("user_id", user_id)
+            .eq("status", "completed")
+            .order("created_at", desc=True)
+            .execute()
+        )
+        uploads_response = (
+            get_supabase_client()
+            .table(UPLOADS_TABLE)
+            .select("id,file_name,created_at")
+            .eq("user_id", user_id)
+            .execute()
+        )
+    except Exception as exc:
+        logger.exception("Unable to list completed analysis options.")
+        raise RuntimeError("Unable to load completed CV analyses.") from exc
+
+    analyses = _extract_rows(analyses_response, "select completed analysis options")
+    uploads = _extract_rows(uploads_response, "select cv uploads for analysis options")
+    uploads_by_id = {str(upload.get("id")): upload for upload in uploads}
+    options: list[dict[str, object]] = []
+
+    for analysis in analyses:
+        analysis_id = analysis.get("id")
+        upload_id = analysis.get("cv_upload_id")
+        target_role = analysis.get("target_role")
+        overall_score = analysis.get("overall_score")
+        analyzed_at = analysis.get("created_at")
+
+        if not all(
+            [
+                isinstance(analysis_id, str),
+                isinstance(upload_id, str),
+                isinstance(target_role, str),
+                isinstance(overall_score, int),
+                isinstance(analyzed_at, str),
+            ]
+        ):
+            continue
+
+        upload = uploads_by_id.get(upload_id)
+        filename = upload.get("file_name") if isinstance(upload, dict) else None
+
+        options.append(
+            {
+                "upload_id": upload_id,
+                "analysis_id": analysis_id,
+                "filename": filename if isinstance(filename, str) and filename.strip() else "Uploaded CV",
+                "analyzed_at": analyzed_at,
+                "target_role": target_role,
+                "overall_score": overall_score,
+            }
+        )
+
+    return options
 
 
 def get_existing_job_match(
