@@ -556,6 +556,48 @@ def test_discovery_service_scores_sorts_and_paginates_profile_results(monkeypatc
     assert result.results_per_page == 2
 
 
+def test_discovery_service_profile_provider_temporary_error_returns_empty_response(monkeypatch) -> None:
+    analysis_id = str(uuid4())
+
+    monkeypatch.setattr(
+        career_profile_service,
+        "get_latest_career_profile",
+        lambda _user_id: career_profile_service.CareerProfile(
+            user_id=OWNER_ID,
+            analysis_id=analysis_id,
+            primary_role="Backend Software Engineer",
+            alternative_roles=["Python Developer"],
+            experience_level="mid",
+            skills=["Python"],
+            strengths=["Python"],
+            weaknesses=[],
+            overall_score=84,
+            preferred_locations=["Turkey"],
+            remote_preference=None,
+        ),
+    )
+    monkeypatch.setattr(
+        job_discovery_service,
+        "search_all_provider_queries",
+        lambda **_kwargs: (_ for _ in ()).throw(TemporaryJobDiscoveryError("rate limited")),
+    )
+
+    result = job_discovery_service.discover_jobs(
+        user_id=OWNER_ID,
+        query=None,
+        location=None,
+        page=1,
+        results_per_page=10,
+    )
+
+    assert result.jobs == []
+    assert result.total_results == 0
+    assert result.profile_used is True
+    assert str(result.analysis_id) == analysis_id
+    assert result.resolved_query == "Backend Software Engineer"
+    assert result.resolved_location == "Turkey"
+
+
 def test_discovery_service_profile_missing_keeps_target_role_error(monkeypatch) -> None:
     provider_called = False
 

@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 RoadmapPriority = Literal["low", "medium", "high", "critical"]
 RoadmapStepStatus = Literal["not_started", "in_progress", "completed"]
 RoadmapTaskStatus = Literal["not_started", "completed"]
+RoadmapPhaseStatus = Literal["completed", "current", "locked"]
 RoadmapDayName = Literal[
     "Monday",
     "Tuesday",
@@ -61,6 +62,12 @@ class CareerRoadmap(BaseModel):
     steps: list[RoadmapStep] = Field(min_length=4, max_length=24)
 
 
+class RoadmapPhase(BaseModel):
+    title: str
+    status: RoadmapPhaseStatus
+    skills: list[str] = Field(default_factory=list)
+
+
 class RoadmapGenerateResponse(BaseModel):
     id: UUID
     user_id: UUID
@@ -68,6 +75,10 @@ class RoadmapGenerateResponse(BaseModel):
     target_role: str
     status: str
     roadmap: CareerRoadmap
+    goal: str = ""
+    estimated_months: str = ""
+    overall_progress: int = Field(default=0, ge=0, le=100)
+    phases: list[RoadmapPhase] = Field(default_factory=list)
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

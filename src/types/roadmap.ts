@@ -1,6 +1,7 @@
 export type RoadmapPriority = 'low' | 'medium' | 'high' | 'critical';
 export type RoadmapStepStatus = 'not_started' | 'in_progress' | 'completed';
 export type RoadmapTaskStatus = 'not_started' | 'completed';
+export type RoadmapPhaseStatus = 'completed' | 'current' | 'locked';
 
 export type RoadmapResource = {
   title: string;
@@ -43,6 +44,12 @@ export type CareerRoadmap = {
   steps: RoadmapStep[];
 };
 
+export type RoadmapPhase = {
+  title: string;
+  status: RoadmapPhaseStatus;
+  skills: string[];
+};
+
 export type RoadmapGenerateResponse = {
   id: string;
   user_id: string;
@@ -50,6 +57,10 @@ export type RoadmapGenerateResponse = {
   target_role: string;
   status: string;
   roadmap: CareerRoadmap;
+  goal: string;
+  estimated_months: string;
+  overall_progress: number;
+  phases: RoadmapPhase[];
   created_at: string | null;
   updated_at: string | null;
 };

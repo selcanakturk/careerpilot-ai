@@ -5,6 +5,7 @@ from app.schemas.job import ExternalJobPosting, JobSearchCareerProfile, JobSearc
 from app.services import career_profile_service
 from app.services.job_match_service import calculate_job_match
 from app.services.jobs.job_aggregator import search_all_provider_queries, search_all_providers
+from app.services.jobs.providers.base import TemporaryJobDiscoveryError
 
 
 logger = logging.getLogger(__name__)
@@ -159,12 +160,25 @@ def discover_jobs(
     )
 
     if context.profile_used:
-        response = search_all_provider_queries(
-            queries=context.queries_used,
-            location=context.resolved_location,
-            page=1,
-            results_per_page=max(page * results_per_page, results_per_page),
-        )
+        try:
+            response = search_all_provider_queries(
+                queries=context.queries_used,
+                location=context.resolved_location,
+                page=1,
+                results_per_page=max(page * results_per_page, results_per_page),
+            )
+        except TemporaryJobDiscoveryError:
+            logger.warning("Personalized job providers are temporarily unavailable; returning empty results.")
+            response = JobSearchResponse(
+                jobs=[],
+                page=page,
+                results_per_page=results_per_page,
+                total_results=0,
+                query=context.resolved_query,
+                location=context.resolved_location,
+                providers_used=[],
+                providers_failed=[],
+            )
         if context.career_profile is not None:
             scored_jobs = _score_jobs(response.jobs, context.career_profile)
             response = response.model_copy(

@@ -963,6 +963,106 @@ def group_tasks_by_day(task_rows: list[dict[str, object]]) -> dict[str, list[Roa
     return result
 
 
+def _chunk_steps_into_phase_groups(steps: list[RoadmapStep]) -> list[list[RoadmapStep]]:
+    if not steps:
+        return [[], [], []]
+
+    base_size = len(steps) // 3
+    remainder = len(steps) % 3
+    groups: list[list[RoadmapStep]] = []
+    cursor = 0
+
+    for index in range(3):
+        group_size = base_size + (1 if index < remainder else 0)
+        groups.append(steps[cursor:cursor + group_size])
+        cursor += group_size
+
+    return groups
+
+
+def _phase_status(group: list[RoadmapStep], previous_groups_completed: bool) -> str:
+    if not group:
+        return "locked"
+
+    if all(step.status == "completed" for step in group):
+        return "completed"
+
+    if previous_groups_completed or any(step.status == "in_progress" for step in group):
+        return "current"
+
+    return "locked"
+
+
+def _append_unique_skill(skills: list[str], value: str) -> None:
+    normalized_value = " ".join(value.split()).strip()
+
+    if not normalized_value:
+        return
+
+    if any(skill.casefold() == normalized_value.casefold() for skill in skills):
+        return
+
+    skills.append(normalized_value)
+
+
+def _phase_skills(group: list[RoadmapStep]) -> list[str]:
+    skills: list[str] = []
+
+    for step in group:
+        _append_unique_skill(skills, step.title)
+
+        for resource in step.resources:
+            _append_unique_skill(skills, resource.title)
+
+        if len(skills) >= 6:
+            return skills[:6]
+
+    return skills[:6]
+
+
+def _overall_progress(steps: list[RoadmapStep]) -> int:
+    tasks = [task for step in steps for day in step.days for task in day.tasks]
+
+    if tasks:
+        completed_tasks = sum(1 for task in tasks if task.status == "completed")
+        return round((completed_tasks / len(tasks)) * 100)
+
+    if not steps:
+        return 0
+
+    completed_steps = sum(1 for step in steps if step.status == "completed")
+    return round((completed_steps / len(steps)) * 100)
+
+
+def _estimated_months(duration_weeks: int) -> str:
+    minimum_months = max(1, round(duration_weeks / 4))
+    maximum_months = max(minimum_months, round(duration_weeks / 3))
+
+    if minimum_months == maximum_months:
+        return str(minimum_months)
+
+    return f"{minimum_months}-{maximum_months}"
+
+
+def build_roadmap_phases(steps: list[RoadmapStep]) -> list[dict[str, object]]:
+    phases: list[dict[str, object]] = []
+    previous_groups_completed = True
+
+    for index, group in enumerate(_chunk_steps_into_phase_groups(steps), start=1):
+        status = _phase_status(group, previous_groups_completed)
+        phases.append(
+            {
+                "title": f"Phase {index}",
+                "status": status,
+                "skills": _phase_skills(group),
+            }
+        )
+
+        previous_groups_completed = previous_groups_completed and status == "completed"
+
+    return phases
+
+
 def _build_response_from_rows(
     roadmap_row: dict[str, object],
     step_rows: list[dict[str, object]],
@@ -993,6 +1093,10 @@ def _build_response_from_rows(
         target_role=str(roadmap_row["target_role"]),
         status=str(roadmap_row["status"]),
         roadmap=roadmap,
+        goal=str(roadmap_row["target_role"]),
+        estimated_months=_estimated_months(roadmap.duration_weeks),
+        overall_progress=_overall_progress(steps),
+        phases=build_roadmap_phases(steps),
         created_at=roadmap_row.get("created_at"),
         updated_at=roadmap_row.get("updated_at"),
     )

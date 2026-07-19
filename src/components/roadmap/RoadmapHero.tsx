@@ -8,6 +8,9 @@ type RoadmapHeroProps = {
 };
 
 export default function RoadmapHero({ roadmap }: RoadmapHeroProps) {
+  const estimatedMonths = roadmap.estimated_months || `${Math.max(1, Math.round(roadmap.roadmap.duration_weeks / 4))}`;
+  const overallProgress = Math.max(0, Math.min(100, roadmap.overall_progress ?? 0));
+
   return (
     <Card className="overflow-hidden p-6 sm:p-7">
       <div className="grid gap-6 lg:grid-cols-[1fr_0.9fr] lg:items-end">
@@ -17,17 +20,42 @@ export default function RoadmapHero({ roadmap }: RoadmapHeroProps) {
             Career Roadmap
           </h1>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
-            A personalized weekly plan for improving your readiness for the target role.
+            A weekly plan for improving your readiness for the target role.
           </p>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
+            Follow the weekly plan to steadily improve your readiness for your target role.
+          </p>
+          <div className="mt-6 max-w-xl">
+            <div className="flex items-center justify-between gap-4">
+              <p className="text-sm font-bold text-slate-950">Overall progress</p>
+              <p className="text-sm font-bold text-brand-700">{overallProgress}%</p>
+            </div>
+            <div
+              className="mt-2 h-3 overflow-hidden rounded-full bg-slate-100"
+              role="progressbar"
+              aria-label="Overall roadmap progress"
+              aria-valuenow={overallProgress}
+              aria-valuemin={0}
+              aria-valuemax={100}
+            >
+              <div
+                className="h-full rounded-full bg-brand-600 transition-all"
+                style={{ width: `${overallProgress}%` }}
+              />
+            </div>
+          </div>
         </div>
 
         <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
           <div className="rounded-md bg-slate-50 p-4">
             <div className="flex items-center gap-2 text-sm font-semibold text-slate-500">
               <Target className="size-4 text-brand-700" />
-              Target Role
+              Goal
             </div>
-            <p className="mt-2 font-bold text-slate-950">{roadmap.target_role}</p>
+            <p className="mt-2 font-bold text-slate-950">{roadmap.goal || roadmap.target_role}</p>
+            <p className="mt-1 text-xs font-semibold text-slate-500">
+              Estimated {estimatedMonths} {estimatedMonths === '1' ? 'month' : 'months'}
+            </p>
           </div>
           <div className="rounded-md bg-slate-50 p-4">
             <div className="flex items-center gap-2 text-sm font-semibold text-slate-500">

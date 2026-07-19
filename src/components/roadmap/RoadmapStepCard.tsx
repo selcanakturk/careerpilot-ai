@@ -26,8 +26,8 @@ const statusClasses: Record<RoadmapStepStatus, string> = {
 
 const statusLabels: Record<RoadmapStepStatus, string> = {
   completed: 'Completed',
-  in_progress: 'In progress',
-  not_started: 'Not started',
+  in_progress: 'Current Week',
+  not_started: 'Upcoming',
 };
 
 export default function RoadmapStepCard({
@@ -45,7 +45,7 @@ export default function RoadmapStepCard({
   const completedTasks = tasks.filter((task) => task.status === 'completed').length;
   const taskProgressPercentage = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
   const hasDailyPlan = totalTasks > 0;
-  const detailButtonLabel = isCompleted ? 'Review daily plan' : 'Continue daily plan';
+  const detailButtonLabel = isInProgress ? 'Continue This Week' : isCompleted ? 'Review Week Plan' : 'Open Week Plan';
 
   const handleStart = () => {
     if (step.id) {
@@ -129,7 +129,7 @@ export default function RoadmapStepCard({
             Completed
           </span>
         )}
-        {step.status !== 'not_started' && (
+        {hasDailyPlan && (
           <Button
             type="button"
             variant="secondary"
@@ -165,9 +165,33 @@ export default function RoadmapStepCard({
 
       <div className="mt-5 grid gap-4">
         <section>
-          <h4 className="text-sm font-bold text-slate-950">Description</h4>
+          <h4 className="text-sm font-bold text-slate-950">Objective</h4>
           <p className="mt-2 text-sm leading-6 text-slate-600">{step.description}</p>
         </section>
+        {step.mini_project && (
+          <section>
+            <h4 className="text-sm font-bold text-slate-950">Mini Project</h4>
+            <p className="mt-2 text-sm leading-6 text-slate-600">{step.mini_project}</p>
+          </section>
+        )}
+        {step.resources.length > 0 && (
+          <section>
+            <h4 className="text-sm font-bold text-slate-950">Resources</h4>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {step.resources.map((resource) => (
+                <a
+                  key={`${resource.title}-${resource.url}`}
+                  href={resource.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="rounded-md bg-slate-50 px-2.5 py-1 text-xs font-bold text-slate-700 ring-1 ring-slate-200 transition hover:bg-white hover:text-brand-700"
+                >
+                  {resource.title}
+                </a>
+              ))}
+            </div>
+          </section>
+        )}
       </div>
     </Card>
   );

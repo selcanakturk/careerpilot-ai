@@ -4,6 +4,8 @@ import type {
   CareerRoadmap,
   RoadmapGenerateResponse,
   RoadmapDay,
+  RoadmapPhase,
+  RoadmapPhaseStatus,
   RoadmapPriority,
   RoadmapResource,
   RoadmapStep,
@@ -166,6 +168,107 @@ function groupTasksByStep(tasks: RoadmapTaskRow[]): Record<string, RoadmapDay[]>
   );
 }
 
+function chunkStepsIntoPhases(steps: RoadmapStep[]): RoadmapStep[][] {
+  if (steps.length === 0) {
+    return [[], [], []];
+  }
+
+  const baseSize = Math.floor(steps.length / 3);
+  const remainder = steps.length % 3;
+  const groups: RoadmapStep[][] = [];
+  let cursor = 0;
+
+  for (let index = 0; index < 3; index += 1) {
+    const groupSize = baseSize + (index < remainder ? 1 : 0);
+    groups.push(steps.slice(cursor, cursor + groupSize));
+    cursor += groupSize;
+  }
+
+  return groups;
+}
+
+function getPhaseStatus(group: RoadmapStep[], previousGroupsCompleted: boolean): RoadmapPhaseStatus {
+  if (group.length === 0) {
+    return 'locked';
+  }
+
+  if (group.every((step) => step.status === 'completed')) {
+    return 'completed';
+  }
+
+  if (previousGroupsCompleted || group.some((step) => step.status === 'in_progress')) {
+    return 'current';
+  }
+
+  return 'locked';
+}
+
+function appendUniqueSkill(skills: string[], value: string) {
+  const normalizedValue = value.replace(/\s+/g, ' ').trim();
+
+  if (!normalizedValue) {
+    return;
+  }
+
+  if (skills.some((skill) => skill.toLowerCase() === normalizedValue.toLowerCase())) {
+    return;
+  }
+
+  skills.push(normalizedValue);
+}
+
+function getPhaseSkills(group: RoadmapStep[]): string[] {
+  const skills: string[] = [];
+
+  group.forEach((step) => {
+    appendUniqueSkill(skills, step.title);
+
+    step.resources.forEach((resource) => {
+      appendUniqueSkill(skills, resource.title);
+    });
+  });
+
+  return skills.slice(0, 6);
+}
+
+function calculateOverallProgress(steps: RoadmapStep[]): number {
+  const tasks = steps.flatMap((step) => step.days.flatMap((day) => day.tasks));
+
+  if (tasks.length > 0) {
+    const completedTasks = tasks.filter((task) => task.status === 'completed').length;
+    return Math.round((completedTasks / tasks.length) * 100);
+  }
+
+  if (steps.length === 0) {
+    return 0;
+  }
+
+  const completedSteps = steps.filter((step) => step.status === 'completed').length;
+  return Math.round((completedSteps / steps.length) * 100);
+}
+
+function getEstimatedMonths(durationWeeks: number): string {
+  const minimumMonths = Math.max(1, Math.round(durationWeeks / 4));
+  const maximumMonths = Math.max(minimumMonths, Math.round(durationWeeks / 3));
+
+  return minimumMonths === maximumMonths ? `${minimumMonths}` : `${minimumMonths}-${maximumMonths}`;
+}
+
+function buildRoadmapPhases(steps: RoadmapStep[]): RoadmapPhase[] {
+  let previousGroupsCompleted = true;
+
+  return chunkStepsIntoPhases(steps).map((group, index) => {
+    const status = getPhaseStatus(group, previousGroupsCompleted);
+    previousGroupsCompleted = previousGroupsCompleted && status === 'completed';
+
+    return {
+      title: `Phase ${index + 1}`,
+      status,
+      skills: getPhaseSkills(group),
+    };
+  });
+}
+
 export async function updateRoadmapStepStatus(
   roadmapId: string,
   stepId: string,
@@ -204,6 +307,10 @@ function mapRoadmapResponse(row: RoadmapRow, steps: RoadmapStep[]): RoadmapGener
     target_role: row.target_role,
     status: row.status,
     roadmap,
+    goal: row.target_role,
+    estimated_months: getEstimatedMonths(row.duration_weeks),
+    overall_progress: calculateOverallProgress(steps),
+    phases: buildRoadmapPhases(steps),
     created_at: row.created_at,
     updated_at: row.updated_at,
   };

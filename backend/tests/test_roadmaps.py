@@ -1094,6 +1094,88 @@ def test_group_tasks_by_day_orders_days_and_tasks() -> None:
     assert grouped[step_id][0].tasks[0].status == "completed"
 
 
+def test_build_roadmap_phases_splits_steps_into_three_groups() -> None:
+    roadmap = CareerRoadmap.model_validate(make_roadmap_payload())
+
+    phases = roadmap_service.build_roadmap_phases(roadmap.steps)
+
+    assert [phase["title"] for phase in phases] == ["Phase 1", "Phase 2", "Phase 3"]
+    assert phases[0]["skills"] == [
+        "Map core product analytics gaps",
+        "Product Analytics Guide",
+        "Build experimentation evidence",
+        "Experiment Design",
+    ]
+    assert phases[1]["skills"] == ["Strengthen roadmap storytelling", "STAR Stories"]
+    assert phases[2]["skills"] == ["Package the role-fit narrative", "PM Interview Prep"]
+
+
+def test_build_roadmap_phases_marks_current_phase() -> None:
+    roadmap = CareerRoadmap.model_validate(make_roadmap_payload())
+    roadmap.steps[0].status = "completed"
+    roadmap.steps[1].status = "completed"
+
+    phases = roadmap_service.build_roadmap_phases(roadmap.steps)
+
+    assert [phase["status"] for phase in phases] == ["completed", "current", "locked"]
+
+
+def test_build_roadmap_response_includes_smart_phase_fields() -> None:
+    roadmap_id = str(uuid4())
+    step_ids = [str(uuid4()) for _step in range(4)]
+    roadmap_row = {
+        "id": roadmap_id,
+        "user_id": OWNER_ID,
+        "analysis_id": str(uuid4()),
+        "target_role": "Backend Developer",
+        "duration_weeks": 4,
+        "summary": "Build backend readiness.",
+        "status": "active",
+        "estimated_job_readiness_before": 70,
+        "estimated_job_readiness_after": 92,
+        "created_at": "2026-07-13T10:00:00Z",
+        "updated_at": "2026-07-13T10:00:00Z",
+    }
+    step_rows = [
+        {
+            "id": step_ids[index],
+            "week_number": index + 1,
+            "title": f"Backend skill {index + 1}",
+            "description": f"Practice backend skill {index + 1}.",
+            "reason": "This closes a core backend gap.",
+            "estimated_hours": 5,
+            "priority": "high",
+            "status": "completed" if index == 0 else "not_started",
+            "resources": [],
+            "mini_project": "Build a small API.",
+            "updated_at": "2026-07-13T10:00:00Z",
+        }
+        for index in range(4)
+    ]
+    task_rows = [
+        {
+            "id": str(uuid4()),
+            "step_id": step_id,
+            "roadmap_id": roadmap_id,
+            "day_name": "Monday",
+            "task_order": 1,
+            "title": "Practice one task",
+            "estimated_minutes": 45,
+            "status": "completed" if index == 0 else "not_started",
+            "updated_at": "2026-07-13T10:00:00Z",
+        }
+        for index, step_id in enumerate(step_ids)
+    ]
+
+    response = roadmap_service._build_response_from_rows(roadmap_row, step_rows, task_rows)
+
+    assert response.goal == "Backend Developer"
+    assert response.estimated_months == "1"
+    assert response.overall_progress == 25
+    assert [phase.status for phase in response.phases] == ["current", "locked", "locked"]
+    assert response.phases[0].skills == ["Backend skill 1", "Backend skill 2"]
+
+
 class FakeLoadTasksQuery:
     def __init__(self, rows: list[dict[str, object]]) -> None:
         self.rows = rows

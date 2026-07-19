@@ -84,10 +84,6 @@ export default function RoadmapPage() {
     );
   }
 
-  const totalSteps = roadmap.roadmap.steps.length;
-  const completedSteps = roadmap.roadmap.steps.filter((step) => step.status === 'completed').length;
-  const progressPercent = totalSteps > 0 ? Math.round((completedSteps / totalSteps) * 100) : 0;
-
   const handleStepStatusChange = async (stepId: string, status: RoadmapStepStatus) => {
     if (updatingStepId) {
       return;
@@ -97,6 +93,10 @@ export default function RoadmapPage() {
     setUpdatingStepId(stepId);
 
     try {
+      if (!roadmap) {
+        return;
+      }
+
       const updatedStep = await updateRoadmapStepStatus(roadmap.id, stepId, status);
 
       setRoadmap((currentRoadmap) => {
@@ -140,29 +140,12 @@ export default function RoadmapPage() {
   return (
     <div className="space-y-6">
       <RoadmapHero roadmap={roadmap} />
-      <Card className="p-5 sm:p-6">
-        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
-          <div>
-            <p className="text-sm font-bold text-brand-700">Roadmap Progress</p>
-            <h2 className="mt-1 text-2xl font-bold tracking-tight text-slate-950">
-              {completedSteps} / {totalSteps} weeks completed
-            </h2>
-          </div>
-          <p className="text-3xl font-bold text-slate-950">{progressPercent}%</p>
-        </div>
-        <div className="mt-4 h-3 overflow-hidden rounded-full bg-slate-100">
-          <div
-            className="h-full rounded-full bg-brand-600 transition-all"
-            style={{ width: `${progressPercent}%` }}
-          />
-        </div>
-        {stepError && (
-          <div role="alert" className="mt-4 rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-            {stepError}
-          </div>
-        )}
-      </Card>
       <RoadmapSummary summary={roadmap.roadmap.summary} />
+      {stepError && (
+        <div role="alert" className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          {stepError}
+        </div>
+      )}
       <RoadmapTimeline
         roadmapId={roadmap.id}
         steps={roadmap.roadmap.steps}

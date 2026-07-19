@@ -411,7 +411,7 @@ export default function JobsPage() {
           <Card className="p-8 text-center">
             <BriefcaseBusiness className="mx-auto size-10 text-brand-700" />
             <h2 className="mt-4 text-2xl font-bold tracking-tight text-slate-950">
-              No personalized jobs were found.
+              No matching jobs were found right now.
             </h2>
             <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-slate-600">
               Try refining your search or adjusting your filters.
