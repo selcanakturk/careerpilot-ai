@@ -36,14 +36,43 @@ TECHNICAL_SKILL_KEYWORDS = (
     "microservices",
 )
 
+SKILL_ALIASES = {
+    "nodejs": "Node.js",
+    "node.js": "Node.js",
+    "node js": "Node.js",
+    "javascript": "JavaScript",
+    "js": "JavaScript",
+    "typescript": "TypeScript",
+    "ts": "TypeScript",
+    "react": "React",
+    "react.js": "React",
+    "reactjs": "React",
+    "rest api": "REST API",
+    "rest apis": "REST API",
+    "restapi": "REST API",
+    "postgresql": "PostgreSQL",
+    "postgres": "PostgreSQL",
+    "postgre sql": "PostgreSQL",
+    "python": "Python",
+    "fastapi": "FastAPI",
+    "django": "Django",
+    "docker": "Docker",
+    "aws": "AWS",
+    "gcp": "GCP",
+}
+
 
 class DeterministicJobMatch(BaseModel):
     match_score: int
     matched_skills: list[str]
     missing_skills: list[str]
+    match_reasons: list[str]
 
 
 def _normalize_token(token: str) -> str:
+    if token in {"redis", "kubernetes", "javascript", "typescript", "express"}:
+        return token
+
     if len(token) > 3 and token.endswith("ies"):
         return f"{token[:-3]}y"
 
@@ -69,13 +98,54 @@ def _compact(value: str) -> str:
     return re.sub(r"[^a-z0-9+#]+", "", value)
 
 
+def canonical_skill(value: object) -> str:
+    normalized = normalize_text(value)
+
+    if not normalized:
+        return ""
+
+    compacted = _compact(normalized)
+
+    alias_by_compact = {
+        _compact(normalize_text(alias)): display_label
+        for alias, display_label in SKILL_ALIASES.items()
+    }
+
+    if compacted in alias_by_compact:
+        return _compact(normalize_text(alias_by_compact[compacted]))
+
+    return compacted
+
+
+def display_skill_label(value: str) -> str:
+    skill_key = canonical_skill(value)
+
+    for display_label in SKILL_ALIASES.values():
+        if canonical_skill(display_label) == skill_key:
+            return display_label
+
+    normalized = re.sub(r"\s+", " ", value).strip()
+    return normalized
+
+
 def _contains_skill(job_text: str, skill: str) -> bool:
     normalized_skill = normalize_text(skill)
 
     if not normalized_skill:
         return False
 
-    return normalized_skill in job_text or _compact(normalized_skill) in _compact(job_text)
+    compacted_job_text = _compact(job_text)
+    skill_key = canonical_skill(skill)
+
+    if normalized_skill in job_text or skill_key in compacted_job_text:
+        return True
+
+    return any(
+        alias_text in job_text or _compact(alias_text) in compacted_job_text
+        for alias, display_label in SKILL_ALIASES.items()
+        if canonical_skill(display_label) == skill_key
+        for alias_text in (normalize_text(alias),)
+    )
 
 
 def _unique_skills(skills: list[str]) -> list[str]:
@@ -83,13 +153,13 @@ def _unique_skills(skills: list[str]) -> list[str]:
     seen_skills: set[str] = set()
 
     for skill in skills:
-        normalized_skill = normalize_text(skill)
+        normalized_skill = canonical_skill(skill)
 
         if not normalized_skill or normalized_skill in seen_skills:
             continue
 
         seen_skills.add(normalized_skill)
-        unique_skills.append(skill.strip())
+        unique_skills.append(display_skill_label(skill))
 
     return unique_skills
 
@@ -198,6 +268,35 @@ def _experience_score(job: ExternalJobPosting | dict[str, Any], profile: CareerP
     return 60 if distance == 1 else 20
 
 
+def _role_match_reason(job: ExternalJobPosting | dict[str, Any], profile: CareerProfile) -> str | None:
+    title = _title_text(job)
+
+    if not title:
+        return None
+
+    primary_role = normalize_text(profile.primary_role)
+
+    if primary_role and primary_role in title:
+        return "This role matches your primary career goal."
+
+    for alternative_role in profile.alternative_roles:
+        normalized_alternative = normalize_text(alternative_role)
+
+        if normalized_alternative and normalized_alternative in title:
+            return "Matches one of your preferred roles."
+
+    return None
+
+
+def _experience_match_reason(job: ExternalJobPosting | dict[str, Any], profile: CareerProfile) -> str | None:
+    experience_score = _experience_score(job, profile)
+
+    if experience_score is None or experience_score < 100:
+        return None
+
+    return "This role fits your experience level."
+
+
 def _skill_match(job: ExternalJobPosting | dict[str, Any], profile: CareerProfile) -> tuple[int | None, list[str]]:
     profile_skills = _unique_skills(profile.skills[:MAX_PROFILE_SKILLS])
 
@@ -213,20 +312,47 @@ def _skill_match(job: ExternalJobPosting | dict[str, Any], profile: CareerProfil
 
 def _extract_missing_skills(job: ExternalJobPosting | dict[str, Any], profile: CareerProfile) -> list[str]:
     job_text = _job_text(job)
-    profile_skill_keys = {normalize_text(skill) for skill in profile.skills}
+    profile_skill_keys = {canonical_skill(skill) for skill in profile.skills}
     missing_skills: list[str] = []
 
     for skill in TECHNICAL_SKILL_KEYWORDS:
-        normalized_skill = normalize_text(skill)
+        normalized_skill = canonical_skill(skill)
 
         if normalized_skill in profile_skill_keys:
             continue
 
-        if _contains_skill(job_text, normalized_skill):
-            label = "Node.js" if normalized_skill == "nodejs" else skill.upper() if skill in {"aws", "gcp"} else skill.title()
-            missing_skills.append(label)
+        if _contains_skill(job_text, skill):
+            missing_skills.append(display_skill_label(skill))
 
     return _unique_skills(missing_skills)
+
+
+def generate_match_reasons(
+    job: ExternalJobPosting | dict[str, Any],
+    profile: CareerProfile,
+    matched_skills: list[str] | None = None,
+) -> list[str]:
+    reasons: list[str] = []
+
+    role_reason = _role_match_reason(job, profile)
+
+    if role_reason:
+        reasons.append(role_reason)
+
+    skills = matched_skills if matched_skills is not None else _skill_match(job, profile)[1]
+
+    for skill in skills[:2]:
+        reasons.append(f"Your {skill} experience is relevant.")
+
+        if len(reasons) >= 3:
+            return reasons
+
+    experience_reason = _experience_match_reason(job, profile)
+
+    if experience_reason:
+        reasons.append(experience_reason)
+
+    return reasons[:3]
 
 
 def calculate_job_match(
@@ -260,4 +386,5 @@ def calculate_job_match(
         match_score=max(0, min(100, match_score)),
         matched_skills=matched_skills,
         missing_skills=_extract_missing_skills(job, career_profile),
+        match_reasons=generate_match_reasons(job, career_profile, matched_skills),
     )

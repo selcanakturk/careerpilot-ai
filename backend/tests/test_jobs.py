@@ -410,6 +410,7 @@ def test_discovery_service_uses_explicit_query_without_career_profile(monkeypatc
     assert result.jobs[0].match_score is None
     assert result.jobs[0].matched_skills == []
     assert result.jobs[0].missing_skills == []
+    assert result.jobs[0].match_reasons == []
     assert result.query == "Python Developer"
     assert result.location == "Remote"
     assert result.profile_used is False
@@ -547,6 +548,10 @@ def test_discovery_service_scores_sorts_and_paginates_profile_results(monkeypatc
     assert result.jobs[0].match_score is not None
     assert result.jobs[0].match_score > (result.jobs[1].match_score or 0)
     assert result.jobs[0].matched_skills == ["Python", "FastAPI", "PostgreSQL"]
+    assert result.jobs[0].match_reasons[:2] == [
+        "This role matches your primary career goal.",
+        "Your Python experience is relevant.",
+    ]
     assert result.page == 1
     assert result.results_per_page == 2
 

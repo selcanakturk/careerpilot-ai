@@ -102,6 +102,7 @@ class ExternalJobPosting(BaseModel):
     match_score: int | None = None
     matched_skills: list[str] = Field(default_factory=list)
     missing_skills: list[str] = Field(default_factory=list)
+    match_reasons: list[str] = Field(default_factory=list)
 
 
 class JobSearchCareerProfile(BaseModel):

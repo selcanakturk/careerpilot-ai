@@ -78,6 +78,7 @@ def _score_jobs(
                     "match_score": match.match_score,
                     "matched_skills": match.matched_skills,
                     "missing_skills": match.missing_skills,
+                    "match_reasons": match.match_reasons,
                 }
             )
         )

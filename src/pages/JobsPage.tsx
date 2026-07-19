@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import { BrainCircuit, BriefcaseBusiness, ExternalLink, Plus, Search } from 'lucide-react';
+import { BrainCircuit, BriefcaseBusiness, Check, ExternalLink, Plus, Search } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
@@ -71,15 +71,27 @@ function formatExperienceLevel(value: string | null) {
     return 'Not specified';
   }
 
-  const normalizedValue = value.trim().toLowerCase();
+  const normalizedValue = value.trim().toLowerCase().replace(/-/g, '_');
   const labels: Record<string, string> = {
+    entry: 'Entry Level',
+    entry_level: 'Entry Level',
     junior: 'Junior',
     mid: 'Mid-level',
-    'mid-level': 'Mid-level',
+    mid_level: 'Mid-level',
     senior: 'Senior',
+    lead: 'Lead',
+    principal: 'Principal',
   };
 
-  return labels[normalizedValue] ?? value.replace(/_/g, ' ');
+  if (labels[normalizedValue]) {
+    return labels[normalizedValue];
+  }
+
+  return normalizedValue
+    .split('_')
+    .filter(Boolean)
+    .map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`)
+    .join(' ');
 }
 
 function formatSalary(job: ExternalJobPosting) {
@@ -412,6 +424,7 @@ export default function JobsPage() {
               const isSaved = jobs.some((savedJob) => savedJob.source_url === job.source_url);
               const matchedSkills = job.matched_skills?.slice(0, 3) ?? [];
               const missingSkills = job.missing_skills?.slice(0, 3) ?? [];
+              const matchReasons = job.match_reasons?.slice(0, 3) ?? [];
 
               return (
                 <Card key={job.external_id} className="p-5">
@@ -440,6 +453,21 @@ export default function JobsPage() {
                       <p className="mt-3 max-w-4xl text-sm leading-6 text-slate-600">
                         {getDescriptionPreview(job.description)}
                       </p>
+                      {matchReasons.length > 0 && (
+                        <div className="mt-4 rounded-md border border-emerald-100 bg-emerald-50/60 p-3">
+                          <p className="text-xs font-bold uppercase tracking-wide text-emerald-800">
+                            Why this job?
+                          </p>
+                          <ul className="mt-2 space-y-1.5">
+                            {matchReasons.map((reason) => (
+                              <li key={reason} className="flex gap-2 text-xs leading-5 text-emerald-900">
+                                <Check className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                                <span>{reason}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
                       {(matchedSkills.length > 0 || missingSkills.length > 0) && (
                         <div className="mt-3 grid gap-2 text-xs text-slate-500 sm:grid-cols-2">
                           {matchedSkills.length > 0 && (

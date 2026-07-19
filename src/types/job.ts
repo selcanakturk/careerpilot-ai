@@ -35,6 +35,7 @@ export type ExternalJobPosting = {
   match_score?: number | null;
   matched_skills?: string[];
   missing_skills?: string[];
+  match_reasons?: string[];
 };
 
 export type JobSearchCareerProfile = {
