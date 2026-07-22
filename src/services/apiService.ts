@@ -4,6 +4,10 @@ type ApiErrorBody = {
   detail?: string;
 };
 
+type ApiRequestOptions = RequestInit & {
+  timeoutMs?: number;
+};
+
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL;
 
 if (!apiBaseUrl) {
@@ -78,16 +82,47 @@ async function getErrorMessage(response: Response) {
   return 'Something went wrong. Please try again.';
 }
 
-export async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
+export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
   const accessToken = await getAccessToken();
-  const response = await fetch(getApiUrl(path), {
-    ...options,
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
-  });
+  const { timeoutMs, headers, signal, body, ...requestOptions } = options;
+  const controller = new AbortController();
+  const timeoutId = timeoutMs ? window.setTimeout(() => controller.abort(), timeoutMs) : null;
+
+  if (signal) {
+    if (signal.aborted) {
+      controller.abort();
+    } else {
+      signal.addEventListener('abort', () => controller.abort(), { once: true });
+    }
+  }
+
+  const requestHeaders = new Headers(headers);
+  requestHeaders.set('Authorization', `Bearer ${accessToken}`);
+
+  if (body !== undefined) {
+    requestHeaders.set('Content-Type', 'application/json');
+  }
+
+  let response: Response;
+
+  try {
+    response = await fetch(getApiUrl(path), {
+      ...requestOptions,
+      body,
+      headers: requestHeaders,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new ApiError('The request took too long. Please try again.', 408);
+    }
+
+    throw error;
+  } finally {
+    if (timeoutId !== null) {
+      window.clearTimeout(timeoutId);
+    }
+  }
 
   if (!response.ok) {
     throw new ApiError(await getErrorMessage(response), response.status);

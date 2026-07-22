@@ -1,15 +1,21 @@
-import { useEffect, useState } from 'react';
-import { ArrowLeft, ExternalLink, Gauge } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { ArrowLeft, ExternalLink, Gauge, Loader2, Sparkles } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
+import CvOptimizerPanel from '../components/jobs/CvOptimizerPanel';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
 import { useAuth } from '../hooks/useAuth';
+import { optimizeCVForJob } from '../services/cvOptimizerService';
 import {
   generateJobMatch,
+  getExistingJobMatch,
   getJobPosting,
   listCompletedAnalyses,
 } from '../services/jobService';
+import type { CVOptimizeResponse } from '../types/cvOptimizer';
 import type { CompletedAnalysisOption, JobMatch, JobPosting } from '../types/job';
+import { getCachedCVOptimizerResult, saveCachedCVOptimizerResult } from '../utils/cvOptimizerCache';
+import { getJobSourceMetadata } from '../utils/jobSourceMetadata';
 
 const SELECTED_ANALYSIS_STORAGE_PREFIX = 'careerpilot:selected-analysis:';
 
@@ -60,10 +66,14 @@ export default function JobDetailPage() {
   const [analyses, setAnalyses] = useState<CompletedAnalysisOption[]>([]);
   const [selectedAnalysisId, setSelectedAnalysisId] = useState('');
   const [match, setMatch] = useState<JobMatch | null>(null);
+  const [optimizedCV, setOptimizedCV] = useState<CVOptimizeResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isOptimizing, setIsOptimizing] = useState(false);
   const [error, setError] = useState('');
   const [matchError, setMatchError] = useState('');
+  const [optimizerError, setOptimizerError] = useState('');
+  const isGeneratingMatchRef = useRef(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -114,11 +124,55 @@ export default function JobDetailPage() {
     };
   }, [jobPostingId, user?.id]);
 
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadStoredResults = async () => {
+      if (!job?.id || !jobPostingId || !selectedAnalysisId || !user?.id) {
+        setMatch(null);
+        setOptimizedCV(null);
+        return;
+      }
+
+      setMatchError('');
+      setOptimizerError('');
+      setMatch(null);
+      setOptimizedCV(
+        getCachedCVOptimizerResult({
+          userId: user.id,
+          jobPostingId,
+          analysisId: selectedAnalysisId,
+        }),
+      );
+
+      try {
+        const existingMatch = await getExistingJobMatch(job.id, selectedAnalysisId);
+
+        if (isMounted) {
+          setMatch(existingMatch);
+        }
+      } catch (loadMatchError) {
+        if (isMounted) {
+          setMatchError(
+            loadMatchError instanceof Error ? loadMatchError.message : 'Unable to load the saved job match.',
+          );
+        }
+      }
+    };
+
+    void loadStoredResults();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [job?.id, jobPostingId, selectedAnalysisId, user?.id]);
+
   const handleGenerateMatch = async () => {
-    if (!job || !selectedAnalysisId || isAnalyzing) {
+    if (!job || !selectedAnalysisId || isGeneratingMatchRef.current) {
       return;
     }
 
+    isGeneratingMatchRef.current = true;
     setIsAnalyzing(true);
     setMatchError('');
 
@@ -128,7 +182,45 @@ export default function JobDetailPage() {
     } catch (generateError) {
       setMatchError(generateError instanceof Error ? generateError.message : 'Unable to complete the job matching request.');
     } finally {
+      isGeneratingMatchRef.current = false;
       setIsAnalyzing(false);
+    }
+  };
+
+  const handleOptimizeCV = async () => {
+    if (!job || !jobPostingId || !selectedAnalysisId || !user?.id || isOptimizing) {
+      return;
+    }
+
+    const metadata = getJobSourceMetadata(user.id, jobPostingId);
+
+    if (!metadata) {
+      setOptimizerError('Job or CV analysis could not be found.');
+      return;
+    }
+
+    setIsOptimizing(true);
+    setOptimizerError('');
+
+    try {
+      const result = await optimizeCVForJob({
+        analysis_id: selectedAnalysisId,
+        job_external_id: metadata.externalId,
+        provider: metadata.provider,
+      });
+      saveCachedCVOptimizerResult(
+        {
+          userId: user.id,
+          jobPostingId,
+          analysisId: selectedAnalysisId,
+        },
+        result,
+      );
+      setOptimizedCV(result);
+    } catch (optimizeError) {
+      setOptimizerError(optimizeError instanceof Error ? optimizeError.message : 'Something went wrong.');
+    } finally {
+      setIsOptimizing(false);
     }
   };
 
@@ -239,6 +331,43 @@ export default function JobDetailPage() {
           </div>
         )}
       </Card>
+
+      <Card className="p-6">
+        <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-center">
+          <div>
+            <p className="text-sm font-bold text-brand-700">CV optimization</p>
+            <h2 className="mt-2 text-xl font-bold tracking-tight text-slate-950">Tailor your CV for this job</h2>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+              Use your selected CV analysis and this job posting to generate a focused, ATS-friendly rewrite.
+            </p>
+          </div>
+          <Button
+            disabled={!selectedAnalysisId || isOptimizing}
+            onClick={() => void handleOptimizeCV()}
+            className="w-full lg:w-auto"
+            aria-label="Optimize my CV for this job"
+          >
+            {isOptimizing ? (
+              <>
+                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                Optimizing CV...
+              </>
+            ) : (
+              <>
+                <Sparkles className="size-4" aria-hidden="true" />
+                Optimize My CV
+              </>
+            )}
+          </Button>
+        </div>
+        {optimizerError && (
+          <div role="alert" className="mt-5 rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            {optimizerError}
+          </div>
+        )}
+      </Card>
+
+      {optimizedCV && <CvOptimizerPanel result={optimizedCV} />}
 
       {match && (
         <Card className="p-6">

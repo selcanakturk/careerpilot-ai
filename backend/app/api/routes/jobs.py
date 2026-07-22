@@ -143,6 +143,34 @@ def get_job_posting(
     return JobPostingResponse.model_validate(job_posting)
 
 
+@router.get("/{job_posting_id}/match/{analysis_id}", response_model=JobMatchResponse)
+def get_existing_job_match(
+    job_posting_id: UUID,
+    analysis_id: UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+) -> JobMatchResponse:
+    try:
+        existing_match = job_service.get_existing_job_match(
+            job_posting_id=str(job_posting_id),
+            analysis_id=str(analysis_id),
+            user_id=current_user.id,
+        )
+    except Exception:
+        logger.exception("Unable to load existing job match.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to load job match.",
+        )
+
+    if existing_match is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Job match not found.",
+        )
+
+    return JobMatchResponse.model_validate(existing_match)
+
+
 @router.post("/{job_posting_id}/match/{analysis_id}", response_model=JobMatchResponse)
 def generate_job_match(
     job_posting_id: UUID,

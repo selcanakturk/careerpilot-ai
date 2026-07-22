@@ -8,6 +8,7 @@ import Input from '../components/ui/Input';
 import Textarea from '../components/ui/Textarea';
 import { useAuth } from '../hooks/useAuth';
 import { createJobPosting, discoverJobs, listCompletedAnalyses, listJobPostings } from '../services/jobService';
+import { saveJobSourceMetadata } from '../utils/jobSourceMetadata';
 import type {
   CompletedAnalysisOption,
   CreateJobPostingInput,
@@ -294,6 +295,14 @@ export default function JobsPage() {
     const existingJob = jobs.find((savedJob) => savedJob.source_url === job.source_url);
 
     if (existingJob) {
+      if (user?.id) {
+        saveJobSourceMetadata({
+          userId: user.id,
+          jobPostingId: existingJob.id,
+          externalJob: job,
+        });
+      }
+
       setSaveMessage('Job saved.');
       return;
     }
@@ -303,6 +312,14 @@ export default function JobsPage() {
 
     try {
       const savedJob = await createJobPosting(mapExternalJobToInput(job));
+      if (user?.id) {
+        saveJobSourceMetadata({
+          userId: user.id,
+          jobPostingId: savedJob.id,
+          externalJob: job,
+        });
+      }
+
       setJobs((currentJobs) => [savedJob, ...currentJobs]);
       setSaveMessage('Job saved.');
     } catch (saveError) {

@@ -29,6 +29,10 @@ function normalizeJobError(error: unknown): Error {
     if (error.status === 503) {
       return new Error('The AI job matching service is busy. Please try again shortly.');
     }
+
+    if (error.status === 408) {
+      return new Error('The job match request took too long. Please try again.');
+    }
   }
 
   if (error instanceof Error) {
@@ -145,8 +149,21 @@ export async function generateJobMatch(jobPostingId: string, analysisId: string)
   try {
     return await apiRequest<JobMatch>(`/api/jobs/${jobPostingId}/match/${analysisId}`, {
       method: 'POST',
+      timeoutMs: 60000,
     });
   } catch (error) {
+    throw normalizeJobError(error);
+  }
+}
+
+export async function getExistingJobMatch(jobPostingId: string, analysisId: string): Promise<JobMatch | null> {
+  try {
+    return await apiRequest<JobMatch>(`/api/jobs/${jobPostingId}/match/${analysisId}`);
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) {
+      return null;
+    }
+
     throw normalizeJobError(error);
   }
 }

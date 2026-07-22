@@ -196,6 +196,34 @@ def test_generate_job_match_existing_match_skips_ai(monkeypatch) -> None:
     assert ai_called is False
 
 
+def test_get_existing_job_match_returns_saved_match(monkeypatch) -> None:
+    job_id = str(uuid4())
+    analysis_id = str(uuid4())
+
+    monkeypatch.setattr(job_service, "get_existing_job_match", lambda **_kwargs: make_match(job_id, analysis_id))
+    app.dependency_overrides[get_current_user] = override_current_user
+
+    try:
+        response = TestClient(app).get(f"/api/jobs/{job_id}/match/{analysis_id}")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()["match_score"] == 78
+
+
+def test_get_existing_job_match_not_found_returns_404(monkeypatch) -> None:
+    monkeypatch.setattr(job_service, "get_existing_job_match", lambda **_kwargs: None)
+    app.dependency_overrides[get_current_user] = override_current_user
+
+    try:
+        response = TestClient(app).get(f"/api/jobs/{uuid4()}/match/{uuid4()}")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 404
+
+
 def test_generate_job_match_saves_ai_result(monkeypatch) -> None:
     job_id = str(uuid4())
     analysis_id = str(uuid4())
