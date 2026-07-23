@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import ProtectedRoute from './components/ProtectedRoute';
 import AppLayout from './layouts/AppLayout';
 import AnalysisResultPage from './pages/AnalysisResultPage';
+import CareerCopilotPage from './pages/CareerCopilotPage';
 import DashboardPage from './pages/DashboardPage';
 import HistoryPage from './pages/HistoryPage';
 import JobDetailPage from './pages/JobDetailPage';
@@ -29,6 +30,7 @@ export default function App() {
           <Route path="/roadmaps/:roadmapId/weeks/:stepId" element={<RoadmapWeekPage />} />
           <Route path="/jobs" element={<JobsPage />} />
           <Route path="/jobs/:jobPostingId" element={<JobDetailPage />} />
+          <Route path="/career-copilot" element={<CareerCopilotPage />} />
           <Route path="/history" element={<HistoryPage />} />
           <Route path="/profile" element={<ProfilePage />} />
         </Route>

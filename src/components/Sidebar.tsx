@@ -3,6 +3,7 @@ import {
   History,
   LayoutDashboard,
   LogOut,
+  MessageCircle,
   BriefcaseBusiness,
   User,
   X,
@@ -19,6 +20,7 @@ const navItems = [
   { label: 'Dashboard', to: '/dashboard', icon: LayoutDashboard },
   { label: 'Upload CV', to: '/upload-cv', icon: FileUp },
   { label: 'Jobs', to: '/jobs', icon: BriefcaseBusiness },
+  { label: 'Career Copilot', to: '/career-copilot', icon: MessageCircle },
   { label: 'History', to: '/history', icon: History },
   { label: 'Profile', to: '/profile', icon: User },
 ];
