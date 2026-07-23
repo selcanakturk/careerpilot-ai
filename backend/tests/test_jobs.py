@@ -165,6 +165,58 @@ def test_get_job_posting_not_found_returns_404(monkeypatch) -> None:
     assert response.status_code == 404
 
 
+def test_delete_job_posting_owner_returns_204(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def delete_job_posting(**kwargs: object) -> bool:
+        captured.update(kwargs)
+        return True
+
+    monkeypatch.setattr(job_service, "delete_job_posting", delete_job_posting)
+    app.dependency_overrides[get_current_user] = override_current_user
+
+    job_id = str(uuid4())
+
+    try:
+        response = TestClient(app).delete(f"/api/jobs/{job_id}")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 204
+    assert response.content == b""
+    assert captured == {"job_posting_id": job_id, "user_id": OWNER_ID}
+
+
+def test_delete_job_posting_not_found_returns_404(monkeypatch) -> None:
+    monkeypatch.setattr(job_service, "delete_job_posting", lambda **_kwargs: False)
+    app.dependency_overrides[get_current_user] = override_current_user
+
+    try:
+        response = TestClient(app).delete(f"/api/jobs/{uuid4()}")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Saved job not found."
+
+
+def test_delete_job_posting_other_user_returns_404(monkeypatch) -> None:
+    monkeypatch.setattr(job_service, "delete_job_posting", lambda **_kwargs: False)
+    app.dependency_overrides[get_current_user] = override_current_user
+
+    try:
+        response = TestClient(app).delete(f"/api/jobs/{uuid4()}")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 404
+
+
+def test_delete_job_posting_auth_required() -> None:
+    response = TestClient(app).delete(f"/api/jobs/{uuid4()}")
+    assert response.status_code == 401
+
+
 def test_generate_job_match_existing_match_skips_ai(monkeypatch) -> None:
     job_id = str(uuid4())
     analysis_id = str(uuid4())

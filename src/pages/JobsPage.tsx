@@ -1,14 +1,21 @@
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import { BrainCircuit, BriefcaseBusiness, Check, ExternalLink, Plus, Search } from 'lucide-react';
+import { BrainCircuit, BriefcaseBusiness, Check, ExternalLink, Plus, Search, Trash2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
 import Input from '../components/ui/Input';
 import Textarea from '../components/ui/Textarea';
 import { useAuth } from '../hooks/useAuth';
-import { createJobPosting, discoverJobs, listCompletedAnalyses, listJobPostings } from '../services/jobService';
-import { saveJobSourceMetadata } from '../utils/jobSourceMetadata';
+import {
+  createJobPosting,
+  deleteJobPosting,
+  discoverJobs,
+  listCompletedAnalyses,
+  listJobPostings,
+} from '../services/jobService';
+import { removeCachedCVOptimizerResultsForJob } from '../utils/cvOptimizerCache';
+import { removeJobSourceMetadata, saveJobSourceMetadata } from '../utils/jobSourceMetadata';
 import type {
   CompletedAnalysisOption,
   CreateJobPostingInput,
@@ -146,6 +153,7 @@ export default function JobsPage() {
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [savingExternalId, setSavingExternalId] = useState<string | null>(null);
+  const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
   const [savedJobsError, setSavedJobsError] = useState('');
   const [analysisOptionsError, setAnalysisOptionsError] = useState('');
   const [discoveryError, setDiscoveryError] = useState('');
@@ -349,6 +357,37 @@ export default function JobsPage() {
       setFormError(saveError instanceof Error ? saveError.message : 'Unable to save job posting.');
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleDeleteSavedJob = async (jobId: string) => {
+    if (deletingJobId) {
+      return;
+    }
+
+    const confirmed = window.confirm('Are you sure you want to remove this saved job?');
+
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingJobId(jobId);
+    setSaveMessage('');
+
+    try {
+      await deleteJobPosting(jobId);
+
+      if (user?.id) {
+        removeJobSourceMetadata(user.id, jobId);
+        removeCachedCVOptimizerResultsForJob(user.id, jobId);
+      }
+
+      setJobs((currentJobs) => currentJobs.filter((job) => job.id !== jobId));
+      setSaveMessage('Saved job removed.');
+    } catch (deleteError) {
+      setSaveMessage(deleteError instanceof Error ? deleteError.message : 'Something went wrong.');
+    } finally {
+      setDeletingJobId(null);
     }
   };
 
@@ -791,12 +830,23 @@ export default function JobsPage() {
                     </p>
                     <p className="mt-2 text-xs font-semibold text-slate-400">Saved {formatDate(job.created_at)}</p>
                   </div>
-                  <Link to={`/jobs/${job.id}`} className="shrink-0">
-                    <Button variant="secondary" className="w-full md:w-auto">
-                      View details
-                      <ExternalLink className="size-4" />
+                  <div className="flex shrink-0 flex-col gap-2 sm:flex-row md:items-center">
+                    <Link to={`/jobs/${job.id}`}>
+                      <Button variant="secondary" className="w-full">
+                        View details
+                        <ExternalLink className="size-4" />
+                      </Button>
+                    </Link>
+                    <Button
+                      variant="secondary"
+                      disabled={deletingJobId === job.id}
+                      onClick={() => void handleDeleteSavedJob(job.id)}
+                      className="w-full"
+                    >
+                      <Trash2 className="size-4" />
+                      {deletingJobId === job.id ? 'Removing...' : 'Remove'}
                     </Button>
-                  </Link>
+                  </div>
                 </div>
               </Card>
             ))}

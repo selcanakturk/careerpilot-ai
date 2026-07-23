@@ -70,6 +70,24 @@ export async function listJobPostings(): Promise<JobPosting[]> {
   }
 }
 
+export async function deleteJobPosting(jobPostingId: string): Promise<void> {
+  try {
+    await apiRequest<void>(`/api/jobs/${jobPostingId}`, {
+      method: 'DELETE',
+    });
+  } catch (error) {
+    if (error instanceof ApiError) {
+      if (error.status === 404) {
+        throw new Error('Saved job could not be found.');
+      }
+
+      throw new Error('Something went wrong.');
+    }
+
+    throw normalizeJobError(error);
+  }
+}
+
 export async function discoverJobs({
   query,
   location,

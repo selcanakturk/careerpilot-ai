@@ -150,6 +150,28 @@ def list_job_postings(user_id: str) -> list[dict[str, object]]:
     return _extract_rows(response, "select job postings")
 
 
+def delete_job_posting(job_posting_id: str, user_id: str) -> bool:
+    existing_job = get_job_posting(job_posting_id=job_posting_id, user_id=user_id)
+
+    if existing_job is None:
+        return False
+
+    try:
+        (
+            get_supabase_client()
+            .table(JOB_POSTINGS_TABLE)
+            .delete()
+            .eq("id", job_posting_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+    except Exception as exc:
+        logger.exception("Unable to delete job posting.")
+        raise RuntimeError("Unable to delete job posting.") from exc
+
+    return True
+
+
 def get_completed_analysis(analysis_id: str, user_id: str) -> dict[str, object] | None:
     try:
         response = (

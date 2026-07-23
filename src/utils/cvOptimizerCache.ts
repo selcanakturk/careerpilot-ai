@@ -12,6 +12,10 @@ function getStorageKey({ userId, jobPostingId, analysisId }: CacheIdentity) {
   return `${CV_OPTIMIZER_CACHE_PREFIX}${userId}:${jobPostingId}:${analysisId}`;
 }
 
+function getJobStorageKeyPrefix(userId: string, jobPostingId: string) {
+  return `${CV_OPTIMIZER_CACHE_PREFIX}${userId}:${jobPostingId}:`;
+}
+
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === 'string');
 }
@@ -61,4 +65,19 @@ export function getCachedCVOptimizerResult(identity: CacheIdentity): CVOptimizeR
 
 export function saveCachedCVOptimizerResult(identity: CacheIdentity, result: CVOptimizeResponse) {
   localStorage.setItem(getStorageKey(identity), JSON.stringify(result));
+}
+
+export function removeCachedCVOptimizerResultsForJob(userId: string, jobPostingId: string) {
+  const prefix = getJobStorageKeyPrefix(userId, jobPostingId);
+  const keysToRemove: string[] = [];
+
+  for (let index = 0; index < localStorage.length; index += 1) {
+    const key = localStorage.key(index);
+
+    if (key?.startsWith(prefix)) {
+      keysToRemove.push(key);
+    }
+  }
+
+  keysToRemove.forEach((key) => localStorage.removeItem(key));
 }

@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ExternalLink, Gauge, Loader2, Sparkles } from 'lucide-react';
-import { Link, useParams } from 'react-router-dom';
+import { ArrowLeft, ExternalLink, Gauge, Loader2, Sparkles, Trash2 } from 'lucide-react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import CvOptimizerPanel from '../components/jobs/CvOptimizerPanel';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
 import { useAuth } from '../hooks/useAuth';
 import { optimizeCVForJob } from '../services/cvOptimizerService';
 import {
+  deleteJobPosting,
   generateJobMatch,
   getExistingJobMatch,
   getJobPosting,
@@ -14,8 +15,12 @@ import {
 } from '../services/jobService';
 import type { CVOptimizeResponse } from '../types/cvOptimizer';
 import type { CompletedAnalysisOption, JobMatch, JobPosting } from '../types/job';
-import { getCachedCVOptimizerResult, saveCachedCVOptimizerResult } from '../utils/cvOptimizerCache';
-import { getJobSourceMetadata } from '../utils/jobSourceMetadata';
+import {
+  getCachedCVOptimizerResult,
+  removeCachedCVOptimizerResultsForJob,
+  saveCachedCVOptimizerResult,
+} from '../utils/cvOptimizerCache';
+import { getJobSourceMetadata, removeJobSourceMetadata } from '../utils/jobSourceMetadata';
 
 const SELECTED_ANALYSIS_STORAGE_PREFIX = 'careerpilot:selected-analysis:';
 
@@ -61,6 +66,7 @@ function SkillList({ items }: { items: string[] }) {
 
 export default function JobDetailPage() {
   const { jobPostingId } = useParams();
+  const navigate = useNavigate();
   const { user } = useAuth();
   const [job, setJob] = useState<JobPosting | null>(null);
   const [analyses, setAnalyses] = useState<CompletedAnalysisOption[]>([]);
@@ -70,9 +76,11 @@ export default function JobDetailPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isOptimizing, setIsOptimizing] = useState(false);
+  const [isDeletingJob, setIsDeletingJob] = useState(false);
   const [error, setError] = useState('');
   const [matchError, setMatchError] = useState('');
   const [optimizerError, setOptimizerError] = useState('');
+  const [deleteError, setDeleteError] = useState('');
   const isGeneratingMatchRef = useRef(false);
 
   useEffect(() => {
@@ -224,6 +232,32 @@ export default function JobDetailPage() {
     }
   };
 
+  const handleDeleteJob = async () => {
+    if (!jobPostingId || !user?.id || isDeletingJob) {
+      return;
+    }
+
+    const confirmed = window.confirm('Are you sure you want to remove this saved job?');
+
+    if (!confirmed) {
+      return;
+    }
+
+    setIsDeletingJob(true);
+    setDeleteError('');
+
+    try {
+      await deleteJobPosting(jobPostingId);
+      removeJobSourceMetadata(user.id, jobPostingId);
+      removeCachedCVOptimizerResultsForJob(user.id, jobPostingId);
+      navigate('/jobs');
+    } catch (removeError) {
+      setDeleteError(removeError instanceof Error ? removeError.message : 'Something went wrong.');
+    } finally {
+      setIsDeletingJob(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <Card className="p-8 text-center">
@@ -268,15 +302,31 @@ export default function JobDetailPage() {
               {formatOption(job.employment_type)}
             </p>
           </div>
-          {job.source_url && (
-            <a href={job.source_url} target="_blank" rel="noreferrer">
-              <Button variant="secondary" className="w-full lg:w-auto">
-                Open original posting
-                <ExternalLink className="size-4" />
-              </Button>
-            </a>
-          )}
+          <div className="flex flex-col gap-2 sm:flex-row lg:flex-col">
+            {job.source_url && (
+              <a href={job.source_url} target="_blank" rel="noreferrer">
+                <Button variant="secondary" className="w-full">
+                  Open original posting
+                  <ExternalLink className="size-4" />
+                </Button>
+              </a>
+            )}
+            <Button
+              variant="secondary"
+              disabled={isDeletingJob}
+              onClick={() => void handleDeleteJob()}
+              className="w-full"
+            >
+              <Trash2 className="size-4" />
+              {isDeletingJob ? 'Removing...' : 'Remove from Saved Jobs'}
+            </Button>
+          </div>
         </div>
+        {deleteError && (
+          <div role="alert" className="mt-5 rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            {deleteError}
+          </div>
+        )}
       </Card>
 
       <Card className="p-6">

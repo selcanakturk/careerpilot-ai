@@ -57,3 +57,7 @@ export function getJobSourceMetadata(userId: string, jobPostingId: string): JobS
 
   return null;
 }
+
+export function removeJobSourceMetadata(userId: string, jobPostingId: string) {
+  localStorage.removeItem(getStorageKey(userId, jobPostingId));
+}

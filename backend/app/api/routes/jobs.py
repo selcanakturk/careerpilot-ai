@@ -2,6 +2,7 @@ import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import Response
 
 from app.core.security import CurrentUser, get_current_user
 from app.schemas.job import (
@@ -141,6 +142,32 @@ def get_job_posting(
         )
 
     return JobPostingResponse.model_validate(job_posting)
+
+
+@router.delete("/{job_posting_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_job_posting(
+    job_posting_id: UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+) -> Response:
+    try:
+        deleted = job_service.delete_job_posting(
+            job_posting_id=str(job_posting_id),
+            user_id=current_user.id,
+        )
+    except Exception:
+        logger.exception("Unable to delete job posting.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to delete job posting.",
+        )
+
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Saved job not found.",
+        )
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/{job_posting_id}/match/{analysis_id}", response_model=JobMatchResponse)
