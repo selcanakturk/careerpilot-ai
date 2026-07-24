@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
-import { Bot, Send, UserRound } from 'lucide-react';
+import { ArrowRight, Bot, Send, UserRound } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import { useNavigate } from 'react-router-dom';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
 import Textarea from '../components/ui/Textarea';
 import { sendCareerCopilotMessage } from '../services/careerCopilotService';
 import { listCompletedAnalyses } from '../services/jobService';
-import type { CareerCopilotMessage } from '../types/careerCopilot';
+import type { CareerCopilotMessage, CareerCopilotSuggestedAction } from '../types/careerCopilot';
 import type { CompletedAnalysisOption } from '../types/job';
 
 const STARTER_MESSAGE = 'Hi! What would you like to improve in your career?';
@@ -18,12 +19,16 @@ const QUICK_ACTIONS = [
   'What are the biggest gaps in my career profile?',
 ];
 
-function createAssistantMessage(content: string): CareerCopilotMessage {
+function createAssistantMessage(
+  content: string,
+  suggestedAction?: CareerCopilotSuggestedAction | null,
+): CareerCopilotMessage {
   return {
     id: crypto.randomUUID(),
     role: 'assistant',
     content,
     createdAt: new Date().toISOString(),
+    suggestedAction,
   };
 }
 
@@ -108,6 +113,7 @@ function MarkdownMessage({ content }: { content: string }) {
 }
 
 export default function CareerCopilotPage() {
+  const navigate = useNavigate();
   const [analyses, setAnalyses] = useState<CompletedAnalysisOption[]>([]);
   const [selectedAnalysisId, setSelectedAnalysisId] = useState('');
   const [messages, setMessages] = useState<CareerCopilotMessage[]>([
@@ -198,7 +204,10 @@ export default function CareerCopilotPage() {
         analysis_id: selectedAnalysisId,
         message: normalizedMessage,
       });
-      setMessages((currentMessages) => [...currentMessages, createAssistantMessage(response.reply)]);
+      setMessages((currentMessages) => [
+        ...currentMessages,
+        createAssistantMessage(response.reply, response.suggested_action),
+      ]);
     } catch (sendError) {
       setError(sendError instanceof Error ? sendError.message : 'Something went wrong.');
     } finally {
@@ -283,6 +292,18 @@ export default function CareerCopilotPage() {
                           <p className="text-xs font-medium text-slate-500">AI Career Assistant</p>
                         </div>
                         <MarkdownMessage content={message.content} />
+                        {message.suggestedAction && (
+                          <div className="border-t border-slate-200/70 pt-3">
+                            <Button
+                              variant="secondary"
+                              className="min-h-10 w-full justify-between px-3 text-sm sm:w-auto"
+                              onClick={() => navigate(message.suggestedAction?.target ?? '/dashboard')}
+                            >
+                              {message.suggestedAction.label}
+                              <ArrowRight className="size-4" />
+                            </Button>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

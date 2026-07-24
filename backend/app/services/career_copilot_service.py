@@ -2,6 +2,7 @@ import logging
 
 from app.core.config import get_settings
 from app.core.supabase import get_supabase_client
+from app.schemas.career_copilot import CareerCopilotSuggestedAction
 from app.services import career_profile_service, roadmap_service
 from app.services.ai.providers.gemini_provider import (
     DailyQuotaExceededError,
@@ -24,6 +25,56 @@ ANALYSES_TABLE = "cv_analyses"
 JOB_MATCHES_TABLE = "job_matches"
 PROFILES_TABLE = "profiles"
 MAX_REPLY_CHARACTERS = 1800
+ACTION_RULES: tuple[tuple[tuple[str, ...], CareerCopilotSuggestedAction], ...] = (
+    (
+        ("cv improvement", "optimize cv", "improve my cv", "cv optimizer", "resume improvement", "improve resume"),
+        CareerCopilotSuggestedAction(
+            type="open_cv_optimizer",
+            label="Open CV Optimizer",
+            target="/jobs",
+        ),
+    ),
+    (
+        ("job", "apply", "match score", "missing job skills", "jobs", "job match", "application"),
+        CareerCopilotSuggestedAction(
+            type="open_jobs",
+            label="Open Jobs",
+            target="/jobs",
+        ),
+    ),
+    (
+        ("roadmap", "this week", "learning plan", "what should i learn", "learn next", "study plan"),
+        CareerCopilotSuggestedAction(
+            type="open_roadmap",
+            label="Open Roadmap",
+            target="/dashboard",
+        ),
+    ),
+    (
+        ("profile", "headline", "location", "career profile", "career preferences"),
+        CareerCopilotSuggestedAction(
+            type="open_profile",
+            label="Open Profile",
+            target="/profile",
+        ),
+    ),
+    (
+        ("upload", "new cv", "change cv", "replace cv", "upload cv", "new resume"),
+        CareerCopilotSuggestedAction(
+            type="open_upload_cv",
+            label="Upload CV",
+            target="/upload-cv",
+        ),
+    ),
+    (
+        ("previous analysis", "history", "past analysis", "old analysis", "analysis history"),
+        CareerCopilotSuggestedAction(
+            type="open_history",
+            label="Open History",
+            target="/history",
+        ),
+    ),
+)
 
 SYSTEM_PROMPT = """
 You are Career Copilot, a practical career coach inside CareerPilot AI.
@@ -49,6 +100,16 @@ class CareerCopilotAnalysisNotFoundError(ValueError):
 
 class CareerCopilotAIError(RuntimeError):
     """Raised when Gemini cannot answer safely."""
+
+
+def suggest_action_for_message(message: str) -> CareerCopilotSuggestedAction | None:
+    normalized_message = message.lower()
+
+    for keywords, action in ACTION_RULES:
+        if any(keyword in normalized_message for keyword in keywords):
+            return action
+
+    return None
 
 
 def _extract_response_data(response: object, action: str) -> object | None:

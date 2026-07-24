@@ -23,6 +23,7 @@ def chat(
             analysis_id=str(payload.analysis_id),
             message=payload.message,
         )
+        suggested_action = career_copilot_service.suggest_action_for_message(payload.message)
     except career_copilot_service.CareerCopilotAnalysisNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -40,4 +41,4 @@ def chat(
             detail="Unable to complete Career Copilot request.",
         )
 
-    return CareerCopilotResponse(reply=reply)
+    return CareerCopilotResponse(reply=reply, suggested_action=suggested_action)

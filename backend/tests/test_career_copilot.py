@@ -87,7 +87,12 @@ def test_career_copilot_success(monkeypatch) -> None:
         "message": "What should I learn next?",
     }
     assert response.json() == {
-        "reply": "Prioritize Python API projects, then prepare deployment examples."
+        "reply": "Prioritize Python API projects, then prepare deployment examples.",
+        "suggested_action": {
+            "type": "open_roadmap",
+            "label": "Open Roadmap",
+            "target": "/dashboard",
+        },
     }
 
 
@@ -354,3 +359,56 @@ def test_latest_job_match_context_reads_newest_match(monkeypatch) -> None:
     assert fake_client.query.table_name == "job_matches"
     assert ("user_id", OWNER_ID) in fake_client.query.filters
     assert ("updated_at", True) in fake_client.query.orders
+
+
+def test_suggest_action_cv_intent() -> None:
+    action = career_copilot_service.suggest_action_for_message("How can I improve my CV?")
+
+    assert action is not None
+    assert action.type == "open_cv_optimizer"
+    assert action.label == "Open CV Optimizer"
+    assert action.target == "/jobs"
+
+
+def test_suggest_action_job_intent() -> None:
+    action = career_copilot_service.suggest_action_for_message("Which job should I apply to?")
+
+    assert action is not None
+    assert action.type == "open_jobs"
+    assert action.target == "/jobs"
+
+
+def test_suggest_action_roadmap_intent() -> None:
+    action = career_copilot_service.suggest_action_for_message("What should I learn next?")
+
+    assert action is not None
+    assert action.type == "open_roadmap"
+    assert action.target == "/dashboard"
+
+
+def test_suggest_action_profile_intent() -> None:
+    action = career_copilot_service.suggest_action_for_message("Can you improve my headline?")
+
+    assert action is not None
+    assert action.type == "open_profile"
+    assert action.target == "/profile"
+
+
+def test_suggest_action_upload_intent() -> None:
+    action = career_copilot_service.suggest_action_for_message("I want to upload a new CV.")
+
+    assert action is not None
+    assert action.type == "open_upload_cv"
+    assert action.target == "/upload-cv"
+
+
+def test_suggest_action_history_intent() -> None:
+    action = career_copilot_service.suggest_action_for_message("Show my previous analysis history.")
+
+    assert action is not None
+    assert action.type == "open_history"
+    assert action.target == "/history"
+
+
+def test_suggest_action_unknown_intent_returns_none() -> None:
+    assert career_copilot_service.suggest_action_for_message("Can you explain this in simpler terms?") is None

@@ -1,6 +1,17 @@
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
+from typing import Literal
+
+
+CareerCopilotActionType = Literal[
+    "open_cv_optimizer",
+    "open_jobs",
+    "open_roadmap",
+    "open_profile",
+    "open_upload_cv",
+    "open_history",
+]
 
 
 class CareerCopilotRequest(BaseModel):
@@ -18,5 +29,12 @@ class CareerCopilotRequest(BaseModel):
         return normalized_value
 
 
+class CareerCopilotSuggestedAction(BaseModel):
+    type: CareerCopilotActionType
+    label: str
+    target: str
+
+
 class CareerCopilotResponse(BaseModel):
     reply: str
+    suggested_action: CareerCopilotSuggestedAction | None = None
