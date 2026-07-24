@@ -1,5 +1,5 @@
 import { Menu, Sparkles } from 'lucide-react';
-import { Link, NavLink, useNavigate } from 'react-router-dom';
+import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import Button from './ui/Button';
 
@@ -14,6 +14,30 @@ const publicLinks = [
 export default function Navbar({ onMenuClick }: NavbarProps) {
   const { isAuthenticated, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  const scrollToTop = () => {
+    if (location.pathname !== '/') {
+      navigate('/');
+      return;
+    }
+
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const scrollToFeatures = () => {
+    const scroll = () => {
+      document.getElementById('features')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+
+    if (location.pathname !== '/') {
+      navigate('/');
+      window.setTimeout(scroll, 120);
+      return;
+    }
+
+    scroll();
+  };
 
   const handleLogout = async () => {
     const result = await logout();
@@ -48,9 +72,9 @@ export default function Navbar({ onMenuClick }: NavbarProps) {
         {!onMenuClick && !isAuthenticated && (
           <nav className="hidden items-center gap-7 text-sm font-medium text-slate-600 md:flex">
             {publicLinks.map((link) => (
-              <NavLink key={link.label} to={link.to} className="hover:text-slate-950">
+              <button key={link.label} type="button" onClick={scrollToFeatures} className="hover:text-slate-950">
                 {link.label}
-              </NavLink>
+              </button>
             ))}
           </nav>
         )}
@@ -58,12 +82,20 @@ export default function Navbar({ onMenuClick }: NavbarProps) {
         <div className="flex items-center gap-2">
           {isAuthenticated ? (
             <>
-              <NavLink
-                to="/"
+              <button
+                type="button"
+                onClick={scrollToTop}
                 className="inline-flex min-h-11 items-center justify-center rounded-md px-3 py-2 text-sm font-semibold text-slate-700 transition hover:-translate-y-0.5 hover:bg-slate-100 sm:px-4"
               >
                 Home
-              </NavLink>
+              </button>
+              <button
+                type="button"
+                onClick={scrollToFeatures}
+                className="hidden min-h-11 items-center justify-center rounded-md px-3 py-2 text-sm font-semibold text-slate-700 transition hover:-translate-y-0.5 hover:bg-slate-100 sm:inline-flex sm:px-4"
+              >
+                Features
+              </button>
               <NavLink
                 to="/dashboard"
                 className={({ isActive }) =>

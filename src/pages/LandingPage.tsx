@@ -1,34 +1,82 @@
-import { ArrowRight, BrainCircuit, FileSearch, ListChecks, MessagesSquare } from 'lucide-react';
+import {
+  ArrowRight,
+  Bot,
+  BrainCircuit,
+  BriefcaseBusiness,
+  FileSearch,
+  ListChecks,
+  MessagesSquare,
+  Sparkles,
+} from 'lucide-react';
 import { Link } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
-import { landingHowItWorks, landingReasons } from '../data/mockData';
+import { useAuth } from '../hooks/useAuth';
 
 const features = [
   {
-    title: 'CV readiness analysis',
-    description: 'Evaluate clarity, structure, achievement quality, and role alignment from one upload.',
+    title: 'AI CV Analysis',
+    description: 'Evaluate your CV’s clarity, strengths, weaknesses, ATS readiness, and missing skills.',
     icon: FileSearch,
   },
   {
-    title: 'Targeted skill gaps',
-    description: 'Identify missing proof points, technical gaps, and positioning risks for your target role.',
+    title: 'AI Job Match',
+    description: 'Compare your CV with real job postings and understand your compatibility score.',
+    icon: BriefcaseBusiness,
+  },
+  {
+    title: 'AI CV Optimizer',
+    description: 'Generate a focused, ATS-friendly rewrite tailored to a selected job.',
+    icon: Sparkles,
+  },
+  {
+    title: 'AI Career Copilot',
+    description: 'Ask personalized career questions using your CV, roadmap, profile, and job-match context.',
     icon: BrainCircuit,
   },
   {
-    title: 'Actionable roadmap',
-    description: 'Turn feedback into practical next steps for your CV, portfolio, skills, and applications.',
+    title: 'Personalized Roadmap',
+    description: 'Turn your gaps into a practical weekly learning and application plan.',
     icon: ListChecks,
   },
   {
-    title: 'Role-specific interview prep',
-    description: 'Practice realistic questions shaped around your experience and target job description.',
+    title: 'Interview Preparation',
+    description: 'Practice role-specific questions based on your experience and target position.',
     icon: MessagesSquare,
   },
 ];
 
+const howItWorks = [
+  {
+    title: 'Upload your CV',
+    description: 'Add your current CV so CareerPilot AI can understand your background and target direction.',
+  },
+  {
+    title: 'Analyze strengths and gaps',
+    description: 'Get a structured report with readiness score, strengths, weaknesses, and missing skills.',
+  },
+  {
+    title: 'Match with real jobs',
+    description: 'Compare your CV against saved or discovered job postings and see what fits.',
+  },
+  {
+    title: 'Optimize your application',
+    description: 'Tailor your CV for a selected role with focused, ATS-friendly improvements.',
+  },
+  {
+    title: 'Ask Career Copilot',
+    description: 'Use Copilot for practical guidance based on your CV, roadmap, jobs, and profile context.',
+  },
+];
+
 export default function LandingPage() {
+  const { isAuthenticated } = useAuth();
+
+  const scrollToFeatures = () => {
+    document.getElementById('features')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
   return (
     <div className="min-h-screen bg-slate-50">
       <Navbar />
@@ -40,28 +88,25 @@ export default function LandingPage() {
                 AI-powered career assistant
               </p>
               <h1 className="max-w-3xl text-4xl font-bold tracking-tight text-slate-950 sm:text-5xl lg:text-6xl">
-                CareerPilot AI for sharper applications and stronger interviews.
+                One AI workspace for every job application.
               </h1>
               <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-600">
-                Upload your CV, choose a target role, and turn scattered career advice into a
-                focused plan with match scoring, skill gap feedback, CV improvements, and mock
-                interview prompts.
+                Analyze your CV, compare it with real job postings, optimize each application,
+                and get personalized guidance from your AI Career Copilot.
               </p>
               <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-                <Link to="/register">
+                <Link to={isAuthenticated ? '/dashboard' : '/register'}>
                   <Button className="w-full sm:w-auto">
-                    Get Started
+                    {isAuthenticated ? 'Go to Dashboard' : 'Get Started'}
                     <ArrowRight className="size-4" />
                   </Button>
                 </Link>
-                <Link to="/#features">
-                  <Button variant="secondary" className="w-full sm:w-auto">
-                    See Features
-                  </Button>
-                </Link>
+                <Button variant="secondary" className="w-full sm:w-auto" onClick={scrollToFeatures}>
+                  Explore Features
+                </Button>
               </div>
               <div className="mt-8 grid gap-4 text-sm text-slate-600 sm:grid-cols-3">
-                {['CV scoring', 'Skill gap map', 'Interview prep'].map((item) => (
+                {['AI CV Analysis', 'Job Match', 'Career Copilot'].map((item) => (
                   <div key={item} className="rounded-md border border-slate-200 bg-slate-50 px-4 py-3">
                     <span className="font-semibold text-slate-950">{item}</span>
                   </div>
@@ -80,33 +125,31 @@ export default function LandingPage() {
                   <div className="mb-5 flex items-start justify-between gap-4">
                     <div>
                       <p className="text-sm font-medium text-slate-500">Workspace preview</p>
-                      <h2 className="mt-1 text-xl font-bold text-slate-950">Career readiness flow</h2>
+                      <h2 className="mt-1 text-xl font-bold text-slate-950">Application intelligence</h2>
                     </div>
                     <span className="rounded-md bg-brand-50 px-3 py-1 text-sm font-semibold text-brand-700">
-                      Private by default
+                      AI workspace
                     </span>
                   </div>
-                  <div className="space-y-3">
-                    {[
-                      ['1', 'Upload CV', 'Add a CV after signing in.'],
-                      ['2', 'Choose target role', 'Tell CareerPilot AI what you are applying for.'],
-                      ['3', 'Review guidance', 'See strengths, gaps, roadmap, and interview prompts.'],
-                    ].map(([step, title, detail]) => (
-                      <div key={title} className="flex gap-3 rounded-md bg-slate-50 px-4 py-3">
-                        <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-brand-600 text-sm font-bold text-white">
-                          {step}
-                        </span>
-                        <div>
-                          <p className="text-sm font-semibold text-slate-950">{title}</p>
-                          <p className="mt-1 text-sm leading-6 text-slate-600">{detail}</p>
-                        </div>
-                      </div>
-                    ))}
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-md bg-slate-50 p-4">
+                      <p className="text-sm font-semibold text-slate-600">Job Match</p>
+                      <p className="mt-2 text-4xl font-bold text-slate-950">72%</p>
+                      <p className="mt-2 text-sm leading-6 text-slate-600">Strong API and backend fit.</p>
+                    </div>
+                    <div className="rounded-md bg-brand-50 p-4">
+                      <p className="text-sm font-semibold text-brand-700">Estimated after optimization</p>
+                      <p className="mt-2 text-4xl font-bold text-brand-800">88%</p>
+                      <p className="mt-2 text-sm leading-6 text-slate-700">CV rewritten for the selected role.</p>
+                    </div>
                   </div>
-                  <div className="mt-5 rounded-md bg-slate-50 p-4">
-                    <p className="text-sm font-semibold text-slate-950">No personal data on the public page</p>
+                  <div className="mt-3 rounded-md border border-slate-100 bg-slate-50 p-4">
+                    <div className="mb-2 flex items-center gap-2">
+                      <Bot className="size-4 text-brand-700" />
+                      <p className="text-sm font-semibold text-slate-950">Career Copilot</p>
+                    </div>
                     <p className="mt-1 text-sm leading-6 text-slate-600">
-                      Scores and analysis details only appear inside the authenticated workspace.
+                      “Your strongest next step is to improve Docker and cloud deployment skills.”
                     </p>
                   </div>
                 </div>
@@ -115,14 +158,14 @@ export default function LandingPage() {
           </div>
         </section>
 
-        <section id="features" className="mx-auto max-w-7xl px-4 py-14 sm:px-6 lg:px-8">
+        <section id="features" className="mx-auto max-w-7xl scroll-mt-20 px-4 py-14 sm:px-6 lg:px-8">
           <div className="mb-8 max-w-2xl">
             <p className="text-sm font-semibold text-brand-700">Platform Features</p>
             <h2 className="mt-2 text-3xl font-bold tracking-tight text-slate-950">
-              Everything you need before you apply.
+              Every core workflow for stronger applications.
             </h2>
           </div>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {features.map((feature) => {
               const Icon = feature.icon;
               return (
@@ -141,11 +184,11 @@ export default function LandingPage() {
             <div className="mb-8 max-w-2xl">
               <p className="text-sm font-semibold text-brand-700">How It Works</p>
               <h2 className="mt-2 text-3xl font-bold tracking-tight text-slate-950">
-                From CV upload to interview-ready plan.
+                From one CV upload to a stronger application.
               </h2>
             </div>
-            <div className="grid gap-4 md:grid-cols-3">
-              {landingHowItWorks.map((step, index) => (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+              {howItWorks.map((step, index) => (
                 <div key={step.title} className="rounded-lg border border-slate-200 bg-slate-50 p-5">
                   <span className="flex size-10 items-center justify-center rounded-md bg-brand-600 text-sm font-bold text-white">
                     {index + 1}
@@ -154,33 +197,6 @@ export default function LandingPage() {
                   <p className="mt-2 text-sm leading-6 text-slate-600">{step.description}</p>
                 </div>
               ))}
-            </div>
-          </div>
-        </section>
-
-        <section className="mx-auto max-w-7xl px-4 py-14 sm:px-6 lg:px-8">
-          <div className="grid gap-8 lg:grid-cols-[0.8fr_1.2fr] lg:items-start">
-            <div>
-              <p className="text-sm font-semibold text-brand-700">Why CareerPilot AI?</p>
-              <h2 className="mt-2 text-3xl font-bold tracking-tight text-slate-950">
-                Designed for candidates who want specific, usable feedback.
-              </h2>
-              <p className="mt-4 text-sm leading-6 text-slate-600">
-                CareerPilot AI keeps the process practical: understand what is working, what is
-                missing, and what to improve before your next application.
-              </p>
-            </div>
-            <div className="grid gap-4 sm:grid-cols-3">
-              {landingReasons.map((reason) => {
-                const Icon = reason.icon;
-                return (
-                  <Card key={reason.title} className="p-5">
-                    <Icon className="size-6 text-brand-700" />
-                    <h3 className="mt-4 font-semibold text-slate-950">{reason.title}</h3>
-                    <p className="mt-2 text-sm leading-6 text-slate-600">{reason.description}</p>
-                  </Card>
-                );
-              })}
             </div>
           </div>
         </section>
