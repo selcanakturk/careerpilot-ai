@@ -2,13 +2,18 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { ArrowRight, Bot, Send, UserRound } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
 import Textarea from '../components/ui/Textarea';
 import { sendCareerCopilotMessage } from '../services/careerCopilotService';
 import { listCompletedAnalyses } from '../services/jobService';
-import type { CareerCopilotMessage, CareerCopilotSuggestedAction } from '../types/careerCopilot';
+import type {
+  CareerCopilotMessage,
+  CareerCopilotSuggestedAction,
+  CareerCopilotToolResult,
+} from '../types/careerCopilot';
+import type { CVOptimizerProvider } from '../types/cvOptimizer';
 import type { CompletedAnalysisOption } from '../types/job';
 
 const STARTER_MESSAGE = 'Hi! What would you like to improve in your career?';
@@ -22,6 +27,7 @@ const QUICK_ACTIONS = [
 function createAssistantMessage(
   content: string,
   suggestedAction?: CareerCopilotSuggestedAction | null,
+  toolResult?: CareerCopilotToolResult | null,
 ): CareerCopilotMessage {
   return {
     id: crypto.randomUUID(),
@@ -29,6 +35,7 @@ function createAssistantMessage(
     content,
     createdAt: new Date().toISOString(),
     suggestedAction,
+    toolResult,
   };
 }
 
@@ -112,8 +119,144 @@ function MarkdownMessage({ content }: { content: string }) {
   );
 }
 
+function isProvider(value: string | null): value is CVOptimizerProvider {
+  return value === 'jsearch' || value === 'jooble' || value === 'adzuna';
+}
+
+function CVOptimizationToolCard({
+  result,
+  onOpen,
+}: {
+  result: CareerCopilotToolResult;
+  onOpen: () => void;
+}) {
+  const improvement =
+    result.data !== null ? Math.max(0, result.data.estimated_match - result.data.current_match) : 0;
+
+  if (result.status === 'requires_input') {
+    return (
+      <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+        Choose a saved job first so Career Copilot can tailor your CV to a real posting.
+      </div>
+    );
+  }
+
+  if (result.status === 'failed') {
+    return (
+      <div className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+        We could not run the CV Optimizer from this chat. Please try again from the job detail page.
+      </div>
+    );
+  }
+
+  if (result.data === null) {
+    return null;
+  }
+
+  const majorChanges = result.data.major_changes?.length ? result.data.major_changes : result.data.changes.slice(0, 3);
+  const beforeSummary = result.data.before_professional_summary?.trim() ?? '';
+  const afterSummary = result.data.optimized_professional_summary?.trim() ?? '';
+  const optimizationSummary = result.data.optimization_summary?.trim() ?? afterSummary;
+  const optimizedSkills = result.data.optimized_skills ?? [];
+  const explanation = result.data.explanation?.trim() ?? '';
+
+  return (
+    <div className="space-y-5 rounded-md border border-brand-100 bg-white p-4 shadow-sm">
+      <div>
+        <p className="text-base font-bold text-slate-950">I optimized your CV.</p>
+        <p className="mt-1 text-sm text-slate-600">
+          Your estimated match improves from {result.data.current_match}% to {result.data.estimated_match}%.
+        </p>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-3">
+        {[
+          { label: 'Current Match', value: `${result.data.current_match}%` },
+          { label: 'Estimated Match', value: `${result.data.estimated_match}%` },
+          { label: 'Improvement', value: `+${improvement}%` },
+        ].map((item) => (
+          <div key={item.label} className="rounded-md bg-slate-50 px-3 py-2">
+            <p className="text-xs font-semibold text-slate-500">{item.label}</p>
+            <p className="mt-1 text-lg font-bold text-slate-950">{item.value}</p>
+          </div>
+        ))}
+      </div>
+
+      {optimizationSummary && (
+        <section>
+          <h3 className="text-sm font-bold text-slate-950">Optimization Summary</h3>
+          <p className="mt-2 text-sm leading-6 text-slate-700">{optimizationSummary}</p>
+        </section>
+      )}
+
+      {majorChanges.length > 0 && (
+        <section>
+          <h3 className="text-sm font-bold text-slate-950">Top Changes</h3>
+          <ul className="mt-2 space-y-1.5 text-sm text-slate-700">
+            {majorChanges.map((change) => (
+              <li key={change} className="flex gap-2">
+                <span className="mt-2 size-1.5 shrink-0 rounded-full bg-brand-600" />
+                <span>{change}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {(beforeSummary || afterSummary) && (
+        <section>
+          <h3 className="text-sm font-bold text-slate-950">Before / After</h3>
+          <div className="mt-3 grid gap-3 lg:grid-cols-2">
+            {beforeSummary && (
+              <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Before</p>
+                <p className="mt-2 text-sm leading-6 text-slate-700">{beforeSummary}</p>
+              </div>
+            )}
+            {afterSummary && (
+              <div className="rounded-md border border-brand-100 bg-brand-50 p-3">
+                <p className="text-xs font-bold uppercase tracking-wide text-brand-700">After</p>
+                <p className="mt-2 text-sm leading-6 text-slate-800">{afterSummary}</p>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
+      {optimizedSkills.length > 0 && (
+        <section>
+          <h3 className="text-sm font-bold text-slate-950">Top Skills Added / Emphasized</h3>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {optimizedSkills.slice(0, 8).map((skill) => (
+              <span
+                key={skill}
+                className="rounded-md bg-slate-50 px-3 py-1 text-xs font-bold text-slate-700 ring-1 ring-slate-100"
+              >
+                {skill}
+              </span>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {explanation && (
+        <section>
+          <h3 className="text-sm font-bold text-slate-950">Why these changes?</h3>
+          <p className="mt-2 text-sm leading-6 text-slate-700">{explanation}</p>
+        </section>
+      )}
+
+      <Button variant="secondary" className="min-h-10 w-full justify-between px-3 sm:w-auto" onClick={onOpen}>
+        Open Full CV Optimizer
+        <ArrowRight className="size-4" />
+      </Button>
+    </div>
+  );
+}
+
 export default function CareerCopilotPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [analyses, setAnalyses] = useState<CompletedAnalysisOption[]>([]);
   const [selectedAnalysisId, setSelectedAnalysisId] = useState('');
   const [messages, setMessages] = useState<CareerCopilotMessage[]>([
@@ -125,6 +268,12 @@ export default function CareerCopilotPage() {
   const [error, setError] = useState('');
   const isSendingRef = useRef(false);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const jobExternalId = searchParams.get('job_external_id');
+  const providerParam = searchParams.get('provider');
+  const jobPostingId = searchParams.get('job_posting_id');
+  const preferredAnalysisId = searchParams.get('analysis_id');
+  const provider = isProvider(providerParam) ? providerParam : null;
+  const optimizerTargetPath = jobPostingId ? `/jobs/${jobPostingId}` : '/jobs';
 
   const showQuickActions =
     messages.length === 1 && messages[0]?.role === 'assistant' && messages[0]?.content === STARTER_MESSAGE;
@@ -157,7 +306,11 @@ export default function CareerCopilotPage() {
 
         if (isMounted) {
           setAnalyses(completedAnalyses);
-          setSelectedAnalysisId(completedAnalyses[0]?.analysis_id ?? '');
+          setSelectedAnalysisId(
+            completedAnalyses.find((analysis) => analysis.analysis_id === preferredAnalysisId)?.analysis_id ??
+              completedAnalyses[0]?.analysis_id ??
+              '',
+          );
         }
       } catch (loadError) {
         if (isMounted) {
@@ -175,7 +328,7 @@ export default function CareerCopilotPage() {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [preferredAnalysisId]);
 
   const resetConversationForAnalysis = (analysisId: string) => {
     setSelectedAnalysisId(analysisId);
@@ -203,10 +356,12 @@ export default function CareerCopilotPage() {
       const response = await sendCareerCopilotMessage({
         analysis_id: selectedAnalysisId,
         message: normalizedMessage,
+        job_external_id: jobExternalId,
+        provider,
       });
       setMessages((currentMessages) => [
         ...currentMessages,
-        createAssistantMessage(response.reply, response.suggested_action),
+        createAssistantMessage(response.reply, response.suggested_action, response.tool_result),
       ]);
     } catch (sendError) {
       setError(sendError instanceof Error ? sendError.message : 'Something went wrong.');
@@ -292,7 +447,13 @@ export default function CareerCopilotPage() {
                           <p className="text-xs font-medium text-slate-500">AI Career Assistant</p>
                         </div>
                         <MarkdownMessage content={message.content} />
-                        {message.suggestedAction && (
+                        {message.toolResult && (
+                          <CVOptimizationToolCard
+                            result={message.toolResult}
+                            onOpen={() => navigate(optimizerTargetPath)}
+                          />
+                        )}
+                        {message.suggestedAction && message.toolResult?.status !== 'completed' && (
                           <div className="border-t border-slate-200/70 pt-3">
                             <Button
                               variant="secondary"

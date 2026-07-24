@@ -1,6 +1,10 @@
+import type { CVOptimizeResponse, CVOptimizerProvider } from './cvOptimizer';
+
 export type CareerCopilotRequest = {
   analysis_id: string;
   message: string;
+  job_external_id?: string | null;
+  provider?: CVOptimizerProvider | null;
 };
 
 export type CareerCopilotActionType =
@@ -20,6 +24,26 @@ export type CareerCopilotSuggestedAction = {
 export type CareerCopilotResponse = {
   reply: string;
   suggested_action: CareerCopilotSuggestedAction | null;
+  tool_result: CareerCopilotToolResult | null;
+};
+
+export type CareerCopilotCVOptimizationToolData = {
+  current_match: number;
+  estimated_match: number;
+  changes: string[];
+  major_changes?: string[];
+  optimization_summary?: string;
+  before_professional_summary?: string;
+  optimized_professional_summary?: string;
+  optimized_skills?: string[];
+  explanation?: string;
+  optimized_cv: CVOptimizeResponse['optimized_cv'];
+};
+
+export type CareerCopilotToolResult = {
+  type: 'cv_optimization';
+  status: 'completed' | 'requires_input' | 'failed';
+  data: CareerCopilotCVOptimizationToolData | null;
 };
 
 export type CareerCopilotMessage = {
@@ -28,4 +52,5 @@ export type CareerCopilotMessage = {
   content: string;
   createdAt: string;
   suggestedAction?: CareerCopilotSuggestedAction | null;
+  toolResult?: CareerCopilotToolResult | null;
 };

@@ -2,8 +2,13 @@ import logging
 
 from app.core.config import get_settings
 from app.core.supabase import get_supabase_client
-from app.schemas.career_copilot import CareerCopilotSuggestedAction
-from app.services import career_profile_service, roadmap_service
+from app.schemas.career_copilot import (
+    CareerCopilotResponse,
+    CareerCopilotSuggestedAction,
+    CareerCopilotToolResult,
+)
+from app.schemas.cv_optimizer import JobProvider
+from app.services import career_profile_service, cv_optimizer_service, roadmap_service
 from app.services.ai.providers.gemini_provider import (
     DailyQuotaExceededError,
     FALLBACK_TEMPORARY_ATTEMPTS,
@@ -75,6 +80,15 @@ ACTION_RULES: tuple[tuple[tuple[str, ...], CareerCopilotSuggestedAction], ...] =
         ),
     ),
 )
+CV_OPTIMIZER_INTENT_KEYWORDS = (
+    "improve my cv",
+    "optimize my cv",
+    "tailor my cv",
+    "rewrite my cv",
+    "make my cv better",
+    "update my cv for this job",
+    "cv improvement",
+)
 
 SYSTEM_PROMPT = """
 You are Career Copilot, a practical career coach inside CareerPilot AI.
@@ -110,6 +124,15 @@ def suggest_action_for_message(message: str) -> CareerCopilotSuggestedAction | N
             return action
 
     return None
+
+
+def is_cv_optimizer_intent(message: str) -> bool:
+    normalized_message = message.lower()
+    return any(keyword in normalized_message for keyword in CV_OPTIMIZER_INTENT_KEYWORDS)
+
+
+def _choose_job_action() -> CareerCopilotSuggestedAction:
+    return CareerCopilotSuggestedAction(type="open_jobs", label="Choose a Job", target="/jobs")
 
 
 def _extract_response_data(response: object, action: str) -> object | None:
@@ -414,3 +437,119 @@ def ask_career_copilot(user_id: str, analysis_id: str, message: str) -> str:
             continue
 
     raise CareerCopilotAIError("Career Copilot is temporarily unavailable.")
+
+
+def _as_text(value: object) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _build_completed_optimizer_tool_result(
+    *,
+    result,
+    analysis: dict[str, object],
+) -> CareerCopilotToolResult:
+    current_match = result.match_before
+    estimated_match = result.estimated_match_after
+    optimized_cv = result.optimized_cv.model_dump()
+    optimized_summary = _as_text(optimized_cv.get("summary"))
+    optimized_skills = _to_string_list(optimized_cv.get("skills"))[:8]
+    major_changes = result.changes[:3]
+
+    return CareerCopilotToolResult(
+        type="cv_optimization",
+        status="completed",
+        data={
+            "current_match": current_match,
+            "estimated_match": estimated_match,
+            "changes": result.changes,
+            "major_changes": major_changes,
+            "optimization_summary": optimized_summary,
+            "before_professional_summary": _as_text(analysis.get("summary")),
+            "optimized_professional_summary": optimized_summary,
+            "optimized_skills": optimized_skills,
+            "explanation": "",
+            "optimized_cv": optimized_cv,
+        },
+    )
+
+
+def _build_failed_optimizer_tool_result(message: str) -> CareerCopilotResponse:
+    return CareerCopilotResponse(
+        reply=message,
+        suggested_action=_choose_job_action(),
+        tool_result=CareerCopilotToolResult(type="cv_optimization", status="failed", data=None),
+    )
+
+
+def _handle_cv_optimizer_tool(
+    *,
+    user_id: str,
+    analysis: dict[str, object],
+    analysis_id: str,
+    job_external_id: str | None,
+    provider: JobProvider | None,
+) -> CareerCopilotResponse:
+    if not job_external_id or provider is None:
+        return CareerCopilotResponse(
+            reply="To optimize your CV, please open a saved job or select a job posting first.",
+            suggested_action=_choose_job_action(),
+            tool_result=CareerCopilotToolResult(type="cv_optimization", status="requires_input", data=None),
+        )
+
+    try:
+        result = cv_optimizer_service.optimize_cv_for_job(
+            user_id=user_id,
+            analysis_id=analysis_id,
+            job_external_id=job_external_id,
+            provider=provider,
+        )
+    except cv_optimizer_service.CVOptimizerInputNotFoundError:
+        return _build_failed_optimizer_tool_result(
+            "I could not find the selected job or CV analysis. Please choose a saved job and try again."
+        )
+    except cv_optimizer_service.CVOptimizerAIError:
+        return _build_failed_optimizer_tool_result(
+            "The CV optimization service is temporarily unavailable. Please try again shortly."
+        )
+    except Exception:
+        logger.exception("Career Copilot CV optimizer tool failed.")
+        return _build_failed_optimizer_tool_result("I could not optimize your CV right now. Please try again.")
+
+    return CareerCopilotResponse(
+        reply=(
+            "I optimized your CV for the selected job. "
+            f"Your estimated match improves from {result.match_before}% to {result.estimated_match_after}%."
+        ),
+        suggested_action=CareerCopilotSuggestedAction(
+            type="open_cv_optimizer",
+            label="Open Full CV Optimizer",
+            target="/jobs",
+        ),
+        tool_result=_build_completed_optimizer_tool_result(result=result, analysis=analysis),
+    )
+
+
+def chat_with_career_copilot(
+    *,
+    user_id: str,
+    analysis_id: str,
+    message: str,
+    job_external_id: str | None = None,
+    provider: JobProvider | None = None,
+) -> CareerCopilotResponse:
+    analysis = _get_completed_analysis(analysis_id=analysis_id, user_id=user_id)
+
+    if analysis is None:
+        raise CareerCopilotAnalysisNotFoundError("Analysis not found.")
+
+    if is_cv_optimizer_intent(message):
+        return _handle_cv_optimizer_tool(
+            user_id=user_id,
+            analysis=analysis,
+            analysis_id=analysis_id,
+            job_external_id=job_external_id,
+            provider=provider,
+        )
+
+    reply = ask_career_copilot(user_id=user_id, analysis_id=analysis_id, message=message)
+    return CareerCopilotResponse(reply=reply, suggested_action=suggest_action_for_message(message), tool_result=None)

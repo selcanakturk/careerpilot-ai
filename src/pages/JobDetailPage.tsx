@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ExternalLink, Gauge, Loader2, Sparkles, Trash2 } from 'lucide-react';
+import { ArrowLeft, ExternalLink, Gauge, Loader2, MessageCircle, Sparkles, Trash2 } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import CvOptimizerPanel from '../components/jobs/CvOptimizerPanel';
 import Button from '../components/ui/Button';
@@ -284,6 +284,14 @@ export default function JobDetailPage() {
     );
   }
 
+  const copilotMetadata = user?.id && jobPostingId ? getJobSourceMetadata(user.id, jobPostingId) : null;
+  const copilotPath =
+    copilotMetadata && selectedAnalysisId
+      ? `/career-copilot?job_external_id=${encodeURIComponent(copilotMetadata.externalId)}&provider=${
+          copilotMetadata.provider
+        }&job_posting_id=${encodeURIComponent(jobPostingId ?? '')}&analysis_id=${encodeURIComponent(selectedAnalysisId)}`
+      : '/career-copilot';
+
   return (
     <div className="space-y-7">
       <Link to="/jobs" className="inline-flex text-sm font-semibold text-slate-600 hover:text-slate-950">
@@ -409,6 +417,12 @@ export default function JobDetailPage() {
               </>
             )}
           </Button>
+          <Link to={copilotPath} className="w-full lg:w-auto">
+            <Button variant="secondary" className="w-full">
+              <MessageCircle className="size-4" />
+              Ask Copilot
+            </Button>
+          </Link>
         </div>
         {optimizerError && (
           <div role="alert" className="mt-5 rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">

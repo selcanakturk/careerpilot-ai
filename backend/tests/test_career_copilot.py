@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from app.core.security import CurrentUser, get_current_user
 from app.main import app
+from app.schemas.cv_optimizer import CVOptimizerResult
 from app.services import career_copilot_service
 
 
@@ -61,11 +62,15 @@ def capture_copilot_prompt(monkeypatch, analysis: dict[str, object] | None = Non
 def test_career_copilot_success(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    def ask_career_copilot(**kwargs: object) -> str:
+    def chat_with_career_copilot(**kwargs: object):
         captured.update(kwargs)
-        return "Prioritize Python API projects, then prepare deployment examples."
+        return career_copilot_service.CareerCopilotResponse(
+            reply="Prioritize Python API projects, then prepare deployment examples.",
+            suggested_action=career_copilot_service.suggest_action_for_message(str(kwargs["message"])),
+            tool_result=None,
+        )
 
-    monkeypatch.setattr(career_copilot_service, "ask_career_copilot", ask_career_copilot)
+    monkeypatch.setattr(career_copilot_service, "chat_with_career_copilot", chat_with_career_copilot)
     app.dependency_overrides[get_current_user] = override_current_user
     analysis_id = str(uuid4())
 
@@ -85,6 +90,8 @@ def test_career_copilot_success(monkeypatch) -> None:
         "user_id": OWNER_ID,
         "analysis_id": analysis_id,
         "message": "What should I learn next?",
+        "job_external_id": None,
+        "provider": None,
     }
     assert response.json() == {
         "reply": "Prioritize Python API projects, then prepare deployment examples.",
@@ -93,13 +100,14 @@ def test_career_copilot_success(monkeypatch) -> None:
             "label": "Open Roadmap",
             "target": "/dashboard",
         },
+        "tool_result": None,
     }
 
 
 def test_career_copilot_analysis_not_found_returns_404(monkeypatch) -> None:
     monkeypatch.setattr(
         career_copilot_service,
-        "ask_career_copilot",
+        "chat_with_career_copilot",
         lambda **_kwargs: (_ for _ in ()).throw(
             career_copilot_service.CareerCopilotAnalysisNotFoundError("missing")
         ),
@@ -121,7 +129,7 @@ def test_career_copilot_analysis_not_found_returns_404(monkeypatch) -> None:
 def test_career_copilot_other_user_analysis_returns_404(monkeypatch) -> None:
     monkeypatch.setattr(
         career_copilot_service,
-        "ask_career_copilot",
+        "chat_with_career_copilot",
         lambda **_kwargs: (_ for _ in ()).throw(
             career_copilot_service.CareerCopilotAnalysisNotFoundError("missing")
         ),
@@ -156,7 +164,7 @@ def test_career_copilot_empty_message_returns_422() -> None:
 def test_career_copilot_gemini_error_returns_503(monkeypatch) -> None:
     monkeypatch.setattr(
         career_copilot_service,
-        "ask_career_copilot",
+        "chat_with_career_copilot",
         lambda **_kwargs: (_ for _ in ()).throw(
             career_copilot_service.CareerCopilotAIError("provider failed")
         ),
@@ -173,6 +181,145 @@ def test_career_copilot_gemini_error_returns_503(monkeypatch) -> None:
 
     assert response.status_code == 503
     assert response.json()["detail"] == "Career Copilot is temporarily unavailable. Please try again shortly."
+
+
+def test_career_copilot_cv_intent_with_job_context_runs_optimizer(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(career_copilot_service, "_get_completed_analysis", lambda **_kwargs: make_analysis())
+
+    def optimize_cv_for_job(**kwargs: object) -> CVOptimizerResult:
+        calls.append(kwargs)
+        return CVOptimizerResult(
+            match_before=45,
+            estimated_match_after=70,
+            changes=["Highlighted Python APIs", "Reordered backend skills"],
+            optimized_cv={
+                "headline": "Backend Developer",
+                "summary": "Python backend profile.",
+                "experience": [],
+                "projects": [],
+                "skills": ["Python"],
+                "education": [],
+                "certifications": [],
+                "additional_sections": {},
+            },
+        )
+
+    monkeypatch.setattr(career_copilot_service.cv_optimizer_service, "optimize_cv_for_job", optimize_cv_for_job)
+
+    response = career_copilot_service.chat_with_career_copilot(
+        user_id=OWNER_ID,
+        analysis_id=ANALYSIS_ID,
+        message="Please optimize my CV for this job.",
+        job_external_id="job-1",
+        provider="jooble",
+    )
+
+    assert len(calls) == 1
+    assert calls[0] == {
+        "user_id": OWNER_ID,
+        "analysis_id": ANALYSIS_ID,
+        "job_external_id": "job-1",
+        "provider": "jooble",
+    }
+    assert response.tool_result is not None
+    assert response.tool_result.status == "completed"
+    assert response.tool_result.data is not None
+    assert response.tool_result.data["current_match"] == 45
+    assert response.tool_result.data["estimated_match"] == 70
+    assert response.tool_result.data["major_changes"] == [
+        "Highlighted Python APIs",
+        "Reordered backend skills",
+    ]
+    assert response.tool_result.data["before_professional_summary"] == "Strong backend foundation with deployment gaps."
+    assert response.tool_result.data["optimized_professional_summary"] == "Python backend profile."
+    assert response.tool_result.data["optimization_summary"] == "Python backend profile."
+    assert response.tool_result.data["optimized_skills"] == ["Python"]
+    assert response.tool_result.data["explanation"] == ""
+    assert response.suggested_action is not None
+    assert response.suggested_action.type == "open_cv_optimizer"
+
+
+def test_career_copilot_cv_intent_without_job_context_requires_input(monkeypatch) -> None:
+    monkeypatch.setattr(career_copilot_service, "_get_completed_analysis", lambda **_kwargs: make_analysis())
+
+    response = career_copilot_service.chat_with_career_copilot(
+        user_id=OWNER_ID,
+        analysis_id=ANALYSIS_ID,
+        message="How can I improve my CV?",
+    )
+
+    assert response.tool_result is not None
+    assert response.tool_result.type == "cv_optimization"
+    assert response.tool_result.status == "requires_input"
+    assert response.tool_result.data is None
+    assert response.suggested_action is not None
+    assert response.suggested_action.type == "open_jobs"
+    assert response.suggested_action.label == "Choose a Job"
+
+
+def test_career_copilot_non_cv_intent_has_no_tool_result(monkeypatch) -> None:
+    monkeypatch.setattr(career_copilot_service, "_get_completed_analysis", lambda **_kwargs: make_analysis())
+    monkeypatch.setattr(career_copilot_service, "ask_career_copilot", lambda **_kwargs: "Study Docker next.")
+
+    response = career_copilot_service.chat_with_career_copilot(
+        user_id=OWNER_ID,
+        analysis_id=ANALYSIS_ID,
+        message="What should I learn next?",
+    )
+
+    assert response.reply == "Study Docker next."
+    assert response.tool_result is None
+    assert response.suggested_action is not None
+    assert response.suggested_action.type == "open_roadmap"
+
+
+def test_career_copilot_optimizer_failure_returns_failed_tool_result(monkeypatch) -> None:
+    monkeypatch.setattr(career_copilot_service, "_get_completed_analysis", lambda **_kwargs: make_analysis())
+    monkeypatch.setattr(
+        career_copilot_service.cv_optimizer_service,
+        "optimize_cv_for_job",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            career_copilot_service.cv_optimizer_service.CVOptimizerAIError("provider failed")
+        ),
+    )
+
+    response = career_copilot_service.chat_with_career_copilot(
+        user_id=OWNER_ID,
+        analysis_id=ANALYSIS_ID,
+        message="Tailor my CV for this job.",
+        job_external_id="job-1",
+        provider="adzuna",
+    )
+
+    assert response.tool_result is not None
+    assert response.tool_result.status == "failed"
+    assert response.tool_result.data is None
+    assert "temporarily unavailable" in response.reply
+
+
+def test_career_copilot_invalid_job_returns_failed_tool_result(monkeypatch) -> None:
+    monkeypatch.setattr(career_copilot_service, "_get_completed_analysis", lambda **_kwargs: make_analysis())
+    monkeypatch.setattr(
+        career_copilot_service.cv_optimizer_service,
+        "optimize_cv_for_job",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            career_copilot_service.cv_optimizer_service.CVOptimizerInputNotFoundError("missing")
+        ),
+    )
+
+    response = career_copilot_service.chat_with_career_copilot(
+        user_id=OWNER_ID,
+        analysis_id=ANALYSIS_ID,
+        message="Rewrite my CV for this job.",
+        job_external_id="missing-job",
+        provider="jsearch",
+    )
+
+    assert response.tool_result is not None
+    assert response.tool_result.status == "failed"
+    assert response.suggested_action is not None
+    assert response.suggested_action.type == "open_jobs"
 
 
 def test_career_copilot_prompt_works_with_analysis_only(monkeypatch) -> None:

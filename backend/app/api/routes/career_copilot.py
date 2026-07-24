@@ -18,12 +18,13 @@ def chat(
     current_user: CurrentUser = Depends(get_current_user),
 ) -> CareerCopilotResponse:
     try:
-        reply = career_copilot_service.ask_career_copilot(
+        return career_copilot_service.chat_with_career_copilot(
             user_id=current_user.id,
             analysis_id=str(payload.analysis_id),
             message=payload.message,
+            job_external_id=payload.job_external_id,
+            provider=payload.provider,
         )
-        suggested_action = career_copilot_service.suggest_action_for_message(payload.message)
     except career_copilot_service.CareerCopilotAnalysisNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -40,5 +41,3 @@ def chat(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Unable to complete Career Copilot request.",
         )
-
-    return CareerCopilotResponse(reply=reply, suggested_action=suggested_action)
